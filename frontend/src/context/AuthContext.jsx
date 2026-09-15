@@ -37,6 +37,12 @@ export function AuthProvider({ children }) {
       setUser(data.user)
       return { success: true, user: data.user }
     } catch (err) {
+      // Account exists but hasn't verified its email yet — the backend already
+      // sent a fresh code, so send the caller to the verify-email screen instead
+      // of just showing an error.
+      if (err.response?.status === 403 && err.response?.data?.needs_verification) {
+        return { success: false, needsVerification: true, email: err.response.data.email, message: err.response.data.message }
+      }
       const message = err.response?.data?.message || 'Login failed.'
       return { success: false, message }
     } finally {
@@ -48,15 +54,39 @@ export function AuthProvider({ children }) {
     setLoading(true)
     try {
       const { data } = await api.post('/auth/register', payload)
-      setToken(data.token)
-      setUser(data.user)
-      return { success: true, user: data.user }
+      // Registration no longer logs the user in immediately — they must verify
+      // the emailed code first (see verifyEmail below).
+      return { success: true, needsVerification: true, email: data.email }
     } catch (err) {
       const errors  = err.response?.data?.errors  || null
       const message = err.response?.data?.message || 'Registration failed.'
       return { success: false, message, errors }
     } finally {
       setLoading(false)
+    }
+  }, [])
+
+  const verifyEmail = useCallback(async (email, code) => {
+    setLoading(true)
+    try {
+      const { data } = await api.post('/auth/verify-email', { email, code })
+      setToken(data.token)
+      setUser(data.user)
+      return { success: true, user: data.user }
+    } catch (err) {
+      const message = err.response?.data?.message || 'Verification failed.'
+      return { success: false, message }
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  const resendVerificationCode = useCallback(async (email) => {
+    try {
+      const { data } = await api.post('/auth/resend-verification-code', { email })
+      return { success: true, message: data.message }
+    } catch (err) {
+      return { success: false, message: err.response?.data?.message || 'Failed to resend code.' }
     }
   }, [])
 
@@ -104,9 +134,11 @@ export function AuthProvider({ children }) {
     isAdminOrStaff: ['administrator', 'staff'].includes(user?.role),
     login,
     register,
+    verifyEmail,
+    resendVerificationCode,
     logout,
     refreshUser,
-  }), [user, token, loading, isAuthenticated, login, register, logout, refreshUser])
+  }), [user, token, loading, isAuthenticated, login, register, verifyEmail, resendVerificationCode, logout, refreshUser])
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>
 }

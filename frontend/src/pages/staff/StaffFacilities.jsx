@@ -12,7 +12,6 @@ const FILTERS = [
   { value: 'available',         label: 'Available'   },
   { value: 'under_maintenance', label: 'Maintenance' },
   { value: 'unavailable',       label: 'Unavailable' },
-  { value: 'closed',            label: 'Closed'      },
 ]
 
 function getSportTheme(name = '') {
@@ -62,7 +61,6 @@ export default function StaffFacilities() {
 
   const countAvailable   = facilities.filter(f => f.status === 'available').length
   const countMaint       = facilities.filter(f => f.status === 'under_maintenance').length
-  const countClosed      = facilities.filter(f => f.status === 'closed').length
   const countUnavailable = facilities.filter(f => f.status === 'unavailable').length
 
   if (isLoading) {
@@ -105,7 +103,7 @@ export default function StaffFacilities() {
           { label: 'Total',         value: facilities.length,           icon: Building2,     color: 'text-[#2980B9] bg-[#D6EAF8]' },
           { label: 'Available',     value: countAvailable,              icon: CheckCircle2,  color: 'text-[#27AE60] bg-[#D5F5E3]' },
           { label: 'Maintenance',   value: countMaint,                  icon: AlertTriangle, color: 'text-[#F39C12] bg-[#FEF9E7]' },
-          { label: 'Closed / N/A',  value: countClosed + countUnavailable, icon: Ban,        color: 'text-[#C0392B] bg-[#FADBD8]' },
+          { label: 'Unavailable',   value: countUnavailable,            icon: Ban,           color: 'text-[#C0392B] bg-[#FADBD8]' },
         ].map(({ label, value, icon: Icon, color }) => (
           <div key={label} className="bg-white rounded-xl border border-[#E5E7E9] p-4 shadow-sm">
             <div className={`w-9 h-9 rounded-lg flex items-center justify-center mb-2 ${color}`}>

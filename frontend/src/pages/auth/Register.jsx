@@ -55,7 +55,7 @@ export default function Register() {
     }
 
     setSuccess(true)
-    setTimeout(() => navigate('/dashboard', { replace: true }), 2000)
+    setTimeout(() => navigate(`/verify-email?email=${encodeURIComponent(result.email)}`, { replace: true }), 1500)
   }
 
   const inputFocus = 'focus:border-[#C0392B] focus:ring-[#FADBD8]'
@@ -73,7 +73,7 @@ export default function Register() {
             <CheckCircle2 className="h-9 w-9 text-[#27AE60]" />
           </div>
           <h2 className="text-xl font-bold text-[#1C2833] mb-2">Registration Successful!</h2>
-          <p className="text-[#1C2833] text-sm">Redirecting you to your dashboard…</p>
+          <p className="text-[#1C2833] text-sm">Redirecting you to verify your email…</p>
         </div>
       </div>
     )

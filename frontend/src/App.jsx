@@ -12,6 +12,11 @@ import Login from '@/pages/auth/Login'
 import Register from '@/pages/auth/Register'
 import NotFound from '@/pages/NotFound'
 
+// Lazy pages (auth extras)
+const VerifyEmail    = lazy(() => import('@/pages/auth/VerifyEmail'))
+const ForgotPassword = lazy(() => import('@/pages/auth/ForgotPassword'))
+const ResetPassword  = lazy(() => import('@/pages/auth/ResetPassword'))
+
 // Lazy pages
 const Dashboard         = lazy(() => import('@/pages/dashboard/Dashboard'))
 const StaffDashboard    = lazy(() => import('@/pages/staff/StaffDashboard'))
@@ -84,8 +89,11 @@ export default function App() {
           <ScrollToTop />
           <Suspense fallback={<PageLoader />}>
             <Routes>
-              <Route path="/login"    element={<Login />} />
-              <Route path="/register" element={<Register />} />
+              <Route path="/login"           element={<Login />} />
+              <Route path="/register"        element={<Register />} />
+              <Route path="/verify-email"    element={<VerifyEmail />} />
+              <Route path="/forgot-password" element={<ForgotPassword />} />
+              <Route path="/reset-password"  element={<ResetPassword />} />
 
               {/* Public root — guest page for visitors, dashboard redirect for logged-in */}
               <Route index element={<RoleRedirect />} />

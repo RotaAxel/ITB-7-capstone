@@ -14,8 +14,12 @@ use Illuminate\Support\Facades\Route;
 
 // Public routes
 Route::middleware('throttle:6,1')->group(function () {
-    Route::post('/auth/register', [AuthController::class, 'register']);
-    Route::post('/auth/login',    [AuthController::class, 'login']);
+    Route::post('/auth/register',                 [AuthController::class, 'register']);
+    Route::post('/auth/login',                     [AuthController::class, 'login']);
+    Route::post('/auth/verify-email',              [AuthController::class, 'verifyEmail']);
+    Route::post('/auth/resend-verification-code',  [AuthController::class, 'resendVerificationCode']);
+    Route::post('/auth/forgot-password',            [AuthController::class, 'forgotPassword']);
+    Route::post('/auth/reset-password',             [AuthController::class, 'resetPassword']);
 });
 
 // Public facility browsing (no auth required — for guest page)
@@ -44,6 +48,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::delete('/reservations/{id}',                       [ReservationController::class, 'destroy']);
     Route::post('/reservations/{id}/cancel',                  [ReservationController::class, 'cancel']);
     Route::post('/reservations/{id}/acknowledge-terms',       [ReservationController::class, 'acknowledgeTerms']);
+    Route::get('/reservations/{id}/authorization-letter',     [ReservationController::class, 'downloadAuthorizationLetter']);
 
     // Payments
     Route::post('/payments/{reservationId}/create-link',      [PaymentController::class, 'createLink']);
@@ -98,5 +103,6 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::get('/admin/analytics/utilization',                [AnalyticsController::class, 'facilityUtilization']);
         Route::get('/admin/analytics/trends',                     [AnalyticsController::class, 'bookingTrends']);
         Route::get('/admin/reports',                              [AnalyticsController::class, 'reports']);
+        Route::get('/admin/reports/financial',                    [AnalyticsController::class, 'financialReport']);
     });
 });

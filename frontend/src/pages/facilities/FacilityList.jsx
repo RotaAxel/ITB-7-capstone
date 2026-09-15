@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
-import { MapPin, Users, Clock, Building2, CheckCircle2, AlertTriangle, Ban, ChevronLeft, ChevronRight } from 'lucide-react'
+import { MapPin, Users, Clock, Building2, CheckCircle2, AlertTriangle, Ban, ChevronLeft, ChevronRight, FileCheck } from 'lucide-react'
 import api from '@/api/axios'
 import { Card, CardContent } from '@/components/ui/Card'
 import Badge from '@/components/ui/Badge'
@@ -15,7 +15,6 @@ const FILTERS = [
   { value: 'available',         label: 'Available'   },
   { value: 'under_maintenance', label: 'Maintenance' },
   { value: 'unavailable',       label: 'Unavailable' },
-  { value: 'closed',            label: 'Closed'      },
 ]
 
 function getSportTheme(name = '') {
@@ -77,7 +76,7 @@ export default function FacilityList() {
 
   const countAvailable   = facilities.filter(f => f.status === 'available').length
   const countMaintenance = facilities.filter(f => f.status === 'under_maintenance').length
-  const countOther       = facilities.filter(f => ['unavailable','closed'].includes(f.status)).length
+  const countOther       = facilities.filter(f => f.status === 'unavailable').length
 
   if (isLoading) {
     return (
@@ -206,7 +205,7 @@ export default function FacilityList() {
           { label: 'Total Facilities',     value: facilities.length, icon: Building2,    color: 'text-[#2980B9] bg-[#D6EAF8]' },
           { label: 'Available',            value: countAvailable,    icon: CheckCircle2, color: 'text-[#27AE60] bg-[#D5F5E3]' },
           { label: 'Under Maintenance',    value: countMaintenance,  icon: AlertTriangle,color: 'text-[#F39C12] bg-[#FEF9E7]' },
-          { label: 'Unavailable / Closed', value: countOther,        icon: Ban,          color: 'text-[#C0392B] bg-[#FADBD8]' },
+          { label: 'Unavailable',        value: countOther,        icon: Ban,          color: 'text-[#C0392B] bg-[#FADBD8]' },
         ].map(({ label, value, icon: Icon, color }) => (
           <Card key={label} className="hover:shadow-md transition-shadow">
             <CardContent className="py-4">
@@ -262,6 +261,11 @@ function FacilityCard({ facility }) {
           )}
           {facility.description && (
             <p className="text-sm text-[#1C2833] mt-1 line-clamp-2">{facility.description}</p>
+          )}
+          {facility.requires_authorization_letter && (
+            <p className="text-xs text-[#8E44AD] flex items-center gap-1 mt-1">
+              <FileCheck className="h-3 w-3 shrink-0" /> Requires an authorization letter to reserve
+            </p>
           )}
         </div>
 

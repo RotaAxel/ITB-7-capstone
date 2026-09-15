@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useQuery, useMutation } from '@tanstack/react-query'
 import { toast } from 'sonner'
-import { CheckCircle2, ChevronLeft, ChevronRight } from 'lucide-react'
+import { CheckCircle2, ChevronLeft, ChevronRight, Upload, FileCheck, X } from 'lucide-react'
 import api from '@/api/axios'
 import { Card, CardContent } from '@/components/ui/Card'
 import Badge from '@/components/ui/Badge'
@@ -36,6 +36,7 @@ export default function NewReservation() {
     selected_amenities:     [],
   })
   const [errors, setErrors] = useState({})
+  const [letterFile, setLetterFile] = useState(null)
 
   const { data: facilities = [], isLoading: loadingFacilities } = useQuery({
     queryKey: ['facilities'],
@@ -60,7 +61,7 @@ export default function NewReservation() {
   })
 
   const mutation = useMutation({
-    mutationFn: data => api.post('/reservations', data),
+    mutationFn: data => api.post('/reservations', data), // plain object or FormData — see submit()
     onSuccess: res => {
       toast.success(form.type === 'book' ? 'Booking submitted successfully!' : 'Reservation submitted successfully!')
       navigate(`/reservations/${res.data.id}`, { replace: true })
@@ -119,6 +120,9 @@ export default function NewReservation() {
     if (facilityDetail?.capacity && n > facilityDetail.capacity) {
       errs.number_of_participants = `Exceeds facility capacity of ${facilityDetail.capacity}.`
     }
+    if (facilityDetail?.requires_authorization_letter && !letterFile) {
+      errs.authorization_letter = `${facilityDetail.name} requires an authorization letter to be attached.`
+    }
     setErrors(errs)
     return Object.keys(errs).length === 0
   }
@@ -130,6 +134,24 @@ export default function NewReservation() {
   }
 
   const submit = () => {
+    // Only switch to multipart when there's a file to send — keeps the plain-JSON
+    // path (and every facility that doesn't need a letter) untouched.
+    if (letterFile) {
+      const fd = new FormData()
+      fd.append('facility_id',            form.facility_id)
+      fd.append('reservation_date',       form.reservation_date)
+      fd.append('start_time',             form.start_time)
+      fd.append('end_time',               form.end_time)
+      fd.append('purpose',                form.purpose)
+      fd.append('number_of_participants', form.number_of_participants)
+      form.selected_amenities.forEach(id => fd.append('selected_amenities[]', id))
+      fd.append('terms_acknowledged', 'false')
+      fd.append('type',                form.type)
+      fd.append('authorization_letter', letterFile)
+      mutation.mutate(fd)
+      return
+    }
+
     mutation.mutate({
       facility_id:            Number(form.facility_id),
       reservation_date:       form.reservation_date,
@@ -365,6 +387,49 @@ export default function NewReservation() {
                 )}
               </div>
 
+              {facilityDetail?.requires_authorization_letter && (
+                <div>
+                  <Label>Authorization Letter *</Label>
+                  <p className="text-xs text-[#1C2833] mt-0.5 mb-1.5">
+                    {facilityDetail.name} requires a signed authorization letter (PDF or image) to be attached to this request.
+                  </p>
+                  {letterFile ? (
+                    <div className="flex items-center justify-between gap-2 p-2.5 rounded-lg border border-[#A9DFBF] bg-[#EAFAF1]">
+                      <span className="flex items-center gap-2 min-w-0 text-sm text-[#1E8449]">
+                        <FileCheck className="h-4 w-4 shrink-0" />
+                        <span className="truncate">{letterFile.name}</span>
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => setLetterFile(null)}
+                        className="p-1 rounded text-[#1E8449] hover:bg-[#D5F5E3] shrink-0"
+                      >
+                        <X className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
+                  ) : (
+                    <label className={`flex flex-col items-center justify-center gap-1.5 py-5 rounded-lg border-2 border-dashed cursor-pointer transition-colors ${
+                      errors.authorization_letter ? 'border-[#C0392B] bg-[#FADBD8]/10' : 'border-[#E5E7E9] hover:bg-gray-50'
+                    }`}>
+                      <Upload className="h-5 w-5 text-[#1C2833]" />
+                      <span className="text-sm text-[#1C2833]">Click to upload — PDF, JPG, or PNG (max 5MB)</span>
+                      <input
+                        type="file"
+                        accept=".pdf,.jpg,.jpeg,.png"
+                        className="hidden"
+                        onChange={e => {
+                          const file = e.target.files[0]
+                          if (file) { setLetterFile(file); setErrors(er => ({ ...er, authorization_letter: '' })) }
+                        }}
+                      />
+                    </label>
+                  )}
+                  {errors.authorization_letter && (
+                    <p className="text-red-500 text-xs mt-1">{errors.authorization_letter}</p>
+                  )}
+                </div>
+              )}
+
               {facilityDetail?.amenities?.filter(a => a.is_available).length > 0 && (
                 <div>
                   <Label>Amenities (optional)</Label>
@@ -416,6 +481,9 @@ export default function NewReservation() {
                           .join(', ')
                       : 'None',
                   ],
+                  ...(facilityDetail?.requires_authorization_letter
+                    ? [['Authorization Letter', letterFile?.name ?? '—']]
+                    : []),
                 ].map(([label, value]) => (
                   <div key={label} className="flex gap-4 px-4 py-2.5">
                     <span className="font-medium text-[#1C2833] w-28 shrink-0">{label}</span>
@@ -424,10 +492,9 @@ export default function NewReservation() {
                 ))}
               </div>
               <p className="text-sm text-[#1C2833] bg-[#FADBD8]/20 p-3 rounded-lg border border-[#F1948A]/20">
-                After submission, you'll be asked to <strong>review the terms and complete payment</strong>.
                 {form.type === 'book'
-                  ? ' Once payment is received, your booking is confirmed instantly — no approval wait.'
-                  : ' Once payment is received, your reservation will be reviewed for final approval.'}
+                  ? <>After submission, you'll be asked to <strong>review the terms and complete payment</strong> right away. Once payment is received, your booking is confirmed instantly — no approval wait.</>
+                  : <>After submission, an admin will <strong>review and approve</strong> your request first. You'll only be asked to review the terms and pay once it's approved.</>}
               </p>
             </div>
           )}

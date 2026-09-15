@@ -209,9 +209,14 @@ export default function MyReservations() {
 }
 
 function ReservationRow({ reservation: r, onView, onCancel, onDownload, onPay, onViewReceipt }) {
-  const canCancel = r.status === 'pending' && r.payment?.status !== 'paid'
-  const needTerms = r.status === 'pending' && !r.terms_acknowledged && r.payment?.status !== 'paid'
-  const canPay    = r.status === 'pending' && r.terms_acknowledged && r.payment?.status !== 'paid'
+  // "Reserve" requests must be approved by an admin before payment unlocks;
+  // "Book" reservations can pay immediately. See PaymentController on the backend.
+  const awaitingAdminApproval = r.type === 'reserve' && r.status === 'pending'
+  const readyForPayment       = r.type === 'reserve' ? r.status === 'approved' : r.status === 'pending'
+
+  const canCancel = ['pending', 'approved'].includes(r.status) && r.payment?.status !== 'paid'
+  const needTerms = readyForPayment && !r.terms_acknowledged && r.payment?.status !== 'paid'
+  const canPay    = readyForPayment && r.terms_acknowledged && r.payment?.status !== 'paid'
   const hasPaid   = r.payment?.status === 'paid'
   const awaitingApproval = r.status === 'pending' && hasPaid
   const borderClass = STATUS_BORDER[r.status] ?? 'border-l-gray-300'
@@ -263,6 +268,10 @@ function ReservationRow({ reservation: r, onView, onCancel, onDownload, onPay, o
             <Button variant="outline" size="sm" onClick={onView} className="flex items-center gap-1.5">
               <Eye className="h-3.5 w-3.5" /> View
             </Button>
+
+            {awaitingAdminApproval && (
+              <span className="text-sm text-[#B7950B]">Awaiting admin approval</span>
+            )}
 
             {needTerms && (
               <Link to={`/reservations/${r.id}/terms`}>

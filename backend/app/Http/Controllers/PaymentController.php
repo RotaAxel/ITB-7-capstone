@@ -14,6 +14,24 @@ class PaymentController extends Controller
 {
     public function __construct(private PayMongoService $payMongo) {}
 
+    // ─── "Book" reservations pay immediately and auto-confirm on payment.
+    //     "Reserve" requests must be approved by an admin first — payment only
+    //     opens up once the reservation reaches 'approved'. ─────────────────────
+    private function paymentNotYetAllowedMessage(Reservation $reservation): ?string
+    {
+        if ($reservation->type === 'book') {
+            return $reservation->status === 'pending'
+                ? null
+                : 'This reservation is no longer awaiting payment.';
+        }
+
+        return match ($reservation->status) {
+            'pending' => 'This reservation must be approved by an admin before you can proceed to payment.',
+            'approved' => null,
+            default => 'This reservation is no longer awaiting payment.',
+        };
+    }
+
     // ─── Admin: List all payments ─────────────────────────────────────────────
 
     public function adminIndex(Request $request)
@@ -64,8 +82,8 @@ class PaymentController extends Controller
             return response()->json(['message' => 'Forbidden.'], 403);
         }
 
-        if ($reservation->status !== 'pending') {
-            return response()->json(['message' => 'This reservation is no longer awaiting payment.'], 422);
+        if ($blocked = $this->paymentNotYetAllowedMessage($reservation)) {
+            return response()->json(['message' => $blocked], 422);
         }
 
         if (!$reservation->terms_acknowledged) {
@@ -141,8 +159,8 @@ class PaymentController extends Controller
             return response()->json(['message' => 'Forbidden.'], 403);
         }
 
-        if ($reservation->status !== 'pending') {
-            return response()->json(['message' => 'This reservation is no longer awaiting payment.'], 422);
+        if ($blocked = $this->paymentNotYetAllowedMessage($reservation)) {
+            return response()->json(['message' => $blocked], 422);
         }
 
         if (!$reservation->terms_acknowledged) {
@@ -409,18 +427,23 @@ class PaymentController extends Controller
             return;
         }
 
+        // "Reserve" requests are already approved by staff by the time payment is
+        // even allowed to start (see paymentNotYetAllowedMessage()) — so a
+        // successful payment here confirms it outright, no second admin click.
+        $reservation->update(['status' => 'confirmed']);
+
         NotificationService::notifyUser(
             $reservation->user,
             'payment_success',
-            'Payment Received',
-            "Your payment of ₱{$payment->amount} for {$reservation->facility->name} on {$reservation->reservation_date->format('M d, Y')} has been received. Receipt: {$receiptNumber}. Your reservation is now awaiting staff approval.",
+            'Reservation Confirmed',
+            "Your payment of ₱{$payment->amount} for {$reservation->facility->name} on {$reservation->reservation_date->format('M d, Y')} has been received. Receipt: {$receiptNumber}. Your reservation is confirmed!",
             $reservation->id
         );
 
         NotificationService::notifyAdmins(
             'payment_received',
-            'Payment Received — Awaiting Approval',
-            "{$reservation->user->full_name} completed payment of ₱{$payment->amount} for {$reservation->facility->name}. Receipt: {$receiptNumber}. Please review and approve.",
+            'Reservation Confirmed',
+            "{$reservation->user->full_name} completed payment of ₱{$payment->amount} for {$reservation->facility->name}. Receipt: {$receiptNumber}. Reservation confirmed — no action needed.",
             $reservation->id
         );
     }

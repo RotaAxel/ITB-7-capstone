@@ -20,6 +20,7 @@ class Facility extends Model
         'maintenance_note',
         'maintenance_start',
         'maintenance_end',
+        'requires_authorization_letter',
     ];
 
     protected function casts(): array
@@ -28,6 +29,7 @@ class Facility extends Model
             'maintenance_start' => 'date',
             'maintenance_end' => 'date',
             'price_per_hour' => 'decimal:2',
+            'requires_authorization_letter' => 'boolean',
         ];
     }
 

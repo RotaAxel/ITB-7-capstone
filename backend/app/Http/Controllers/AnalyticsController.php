@@ -9,6 +9,7 @@ use App\Models\User;
 use Barryvdh\DomPDF\Facade\Pdf;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Str;
 
 class AnalyticsController extends Controller
 {
@@ -122,13 +123,28 @@ class AnalyticsController extends Controller
 
         if ($request->query('format') === 'pdf') {
             // dompdf keeps a full in-memory layout tree per table, which grows steeply
-            // with row count — cap how many rows go into one PDF (the on-screen/CSV-era
-            // paths are unaffected) and tell the admin to narrow filters for the rest.
-            $maxRows = 1000;
+            // (measured: ~17s/206MB at 600 rows vs. ~57s/438MB at 1000) — cap how many
+            // rows go into one PDF (the on-screen/CSV-era paths are unaffected) and tell
+            // the admin to narrow filters for the rest. This used to be 1000 rows split
+            // into several small chunked <table>s to keep any single table's layout tree
+            // small, but that chunking caused its own visible bugs (chunk boundaries
+            // landing awkwardly against page boundaries left near-empty pages, or two
+            // chunks' headers stacked a few rows apart) — a single continuous table with
+            // a lower row cap is slower per-row but renders correctly with dompdf's
+            // native <thead> repeat-per-page behavior, with none of that breakage.
+            $maxRows = 600;
 
             $totalMatching = (clone $query)->count();
             $reservations  = $query->limit($maxRows)->get();
             $truncated     = $totalMatching > $reservations->count();
+
+            // Totals for the closing row at the very end of the table — paid amount
+            // only (an unpaid/pending row has no real amount to add to a revenue sum).
+            $totalRevenue = (float) $reservations->reduce(
+                fn($carry, $r) => $carry + ($r->payment && $r->payment->status === 'paid' ? $r->payment->amount : 0),
+                0
+            );
+            $paidCount = $reservations->filter(fn($r) => $r->payment && $r->payment->status === 'paid')->count();
 
             // Small safety margin on top of the row cap above — chunked tables in the
             // template already keep this well under the default 512M limit. Rendering
@@ -136,13 +152,6 @@ class AnalyticsController extends Controller
             // hosting default for max_execution_time than this project's local php.ini.
             ini_set('memory_limit', '768M');
             set_time_limit(120);
-
-            $totalRevenue = $reservations->reduce(
-                fn($carry, $r) => $carry + ($r->payment && $r->payment->status === 'paid' ? $r->payment->amount : 0),
-                0
-            );
-
-            $statusCounts = $reservations->countBy('status');
 
             $facilityName = $request->filled('facility_id')
                 ? Facility::find($request->facility_id)?->name
@@ -156,26 +165,127 @@ class AnalyticsController extends Controller
                 ? 'data:image/png;base64,' . base64_encode(file_get_contents($logoPath))
                 : null;
 
+            // A unique control number stamped on every export so a printed copy can be
+            // traced back to the run that produced it (date + time + a short random tag).
+            $controlNumber = 'CABS-RPT-' . now()->format('Ymd-His') . '-' . strtoupper(Str::random(4));
+
             $pdf = Pdf::loadView('pdf.report', [
                 'reservations'  => $reservations,
                 'totalMatching' => $totalMatching,
                 'truncated'     => $truncated,
-                'generatedAt'   => now(),
                 'totalRevenue'  => $totalRevenue,
-                'statusCounts'  => $statusCounts,
+                'paidCount'     => $paidCount,
+                'generatedAt'   => now(),
+                'controlNumber' => $controlNumber,
+                'printedBy'     => $request->user()?->full_name ?? $request->user()?->name ?? 'System',
                 'logoBase64'    => $logoBase64,
                 'filters'       => [
-                    'date_from'      => $request->query('date_from'),
-                    'date_to'        => $request->query('date_to'),
                     'facility'       => $facilityName,
                     'status'         => $request->query('status'),
                     'payment_status' => $request->query('payment_status'),
                 ],
-            ])->setPaper('a4', 'landscape');
+            ])->setPaper('a4', 'landscape')->setOption('isPhpEnabled', true);
 
             return $pdf->download('cabs-report-' . now()->format('Ymd') . '.pdf');
         }
 
         return response()->json($query->paginate(25));
+    }
+
+    /**
+     * A summarized, non-itemized financial report — aggregated revenue by facility,
+     * payment method, and month. Deliberately carries no client names or per-reservation
+     * rows; it's a management-facing money summary, not a reservation log (see reports()
+     * above for the itemized version).
+     */
+    public function financialReport(Request $request)
+    {
+        ini_set('memory_limit', '768M');
+        set_time_limit(120);
+
+        $query = Reservation::with(['facility', 'payment'])
+            ->when($request->filled('date_from'),   fn($q) => $q->where('reservation_date', '>=', $request->date_from))
+            ->when($request->filled('date_to'),     fn($q) => $q->where('reservation_date', '<=', $request->date_to))
+            ->when($request->filled('facility_id'), fn($q) => $q->where('facility_id', $request->facility_id));
+
+        $reservations = $query->get();
+        $paid = $reservations->filter(fn($r) => $r->payment && $r->payment->status === 'paid');
+
+        $totalRevenue      = (float) $paid->sum(fn($r) => $r->payment->amount);
+        $totalTransactions = $paid->count();
+        $averageValue      = $totalTransactions > 0 ? $totalRevenue / $totalTransactions : 0;
+
+        $byFacility = $paid->groupBy(fn($r) => $r->facility->name ?? 'Unknown')
+            ->map(fn($group, $name) => [
+                'facility' => $name,
+                'count'    => $group->count(),
+                'revenue'  => (float) $group->sum(fn($r) => $r->payment->amount),
+            ])
+            ->sortByDesc('revenue')
+            ->values();
+
+        // Friendly display labels for the raw payment_method codes stored on Payment —
+        // otherwise the report shows technical values like "PAYMONGO_LINK" / "QR_PH".
+        $methodLabels = [
+            'gcash'         => 'GCash',
+            'paymaya'       => 'Maya',
+            'card'          => 'Card',
+            'qr_ph'         => 'QR Ph',
+            'paymongo_link' => 'Payment Link',
+        ];
+
+        $byMethod = $paid->groupBy(fn($r) => $r->payment->payment_method ?? 'unspecified')
+            ->map(fn($group, $method) => [
+                'method'  => $methodLabels[$method] ?? ucwords(str_replace('_', ' ', $method)),
+                'count'   => $group->count(),
+                'revenue' => (float) $group->sum(fn($r) => $r->payment->amount),
+            ])
+            ->sortByDesc('revenue')
+            ->values();
+
+        // Grouped by the sortable "Y-m" key, then relabeled to "Mon Year" for display —
+        // grouping directly by the display label would sort alphabetically, not chronologically.
+        $byMonth = $paid->groupBy(fn($r) => $r->payment->paid_at?->format('Y-m') ?? 'unknown')
+            ->sortKeys()
+            ->map(fn($group, $key) => [
+                'month'   => $key === 'unknown' ? 'Unknown' : \Carbon\Carbon::createFromFormat('Y-m', $key)->format('M Y'),
+                'count'   => $group->count(),
+                'revenue' => (float) $group->sum(fn($r) => $r->payment->amount),
+            ])
+            ->values();
+
+        $statusCounts = $reservations->countBy(fn($r) => $r->payment->status ?? 'no_payment');
+
+        $facilityName = $request->filled('facility_id')
+            ? Facility::find($request->facility_id)?->name
+            : null;
+
+        $logoPath = resource_path('images/logoCabs.png');
+        $logoBase64 = is_file($logoPath)
+            ? 'data:image/png;base64,' . base64_encode(file_get_contents($logoPath))
+            : null;
+
+        $controlNumber = 'CABS-FIN-' . now()->format('Ymd-His') . '-' . strtoupper(Str::random(4));
+
+        $pdf = Pdf::loadView('pdf.financial-report', [
+            'generatedAt'       => now(),
+            'controlNumber'     => $controlNumber,
+            'printedBy'         => $request->user()?->full_name ?? $request->user()?->name ?? 'System',
+            'logoBase64'        => $logoBase64,
+            'totalRevenue'      => $totalRevenue,
+            'totalTransactions' => $totalTransactions,
+            'averageValue'      => $averageValue,
+            'byFacility'        => $byFacility,
+            'byMethod'          => $byMethod,
+            'byMonth'           => $byMonth,
+            'statusCounts'      => $statusCounts,
+            'filters'           => [
+                'date_from' => $request->query('date_from'),
+                'date_to'   => $request->query('date_to'),
+                'facility'  => $facilityName,
+            ],
+        ])->setPaper('a4', 'landscape')->setOption('isPhpEnabled', true);
+
+        return $pdf->download('cabs-financial-report-' . now()->format('Ymd') . '.pdf');
     }
 }

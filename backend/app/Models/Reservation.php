@@ -25,6 +25,7 @@ class Reservation extends Model
         'selected_amenities',
         'terms_acknowledged',
         'terms_acknowledged_at',
+        'authorization_letter_path',
     ];
 
     protected function casts(): array

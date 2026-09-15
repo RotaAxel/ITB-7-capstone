@@ -52,11 +52,30 @@ export default function ReservationDetailModal({ reservationId, onClose }) {
       .catch(() => toast.error('Failed to download receipt.'))
   }
 
+  const downloadAuthorizationLetter = () => {
+    api.get(`/reservations/${reservationId}/authorization-letter`, { responseType: 'blob' })
+      .then(res => {
+        const ext = { 'application/pdf': 'pdf', 'image/jpeg': 'jpg', 'image/png': 'png' }[res.data.type] || 'bin'
+        const url = URL.createObjectURL(res.data)
+        const a   = document.createElement('a')
+        a.href = url
+        a.download = `authorization-letter-reservation-${reservationId}.${ext}`
+        a.click()
+        URL.revokeObjectURL(url)
+      })
+      .catch(() => toast.error('Failed to download the authorization letter.'))
+  }
+
   const r = reservation
 
-  const canCancel = r && r.status === 'pending' && r.payment?.status !== 'paid'
-  const needTerms = r && r.status === 'pending' && !r.terms_acknowledged && r.payment?.status !== 'paid'
-  const canPay    = r && r.status === 'pending' && r.terms_acknowledged && r.payment?.status !== 'paid'
+  // "Reserve" requests must be approved by an admin before payment unlocks;
+  // "Book" reservations can pay immediately. See PaymentController on the backend.
+  const awaitingAdminApproval = r && r.type === 'reserve' && r.status === 'pending'
+  const readyForPayment       = r && (r.type === 'reserve' ? r.status === 'approved' : r.status === 'pending')
+
+  const canCancel = r && ['pending', 'approved'].includes(r.status) && r.payment?.status !== 'paid'
+  const needTerms = readyForPayment && !r.terms_acknowledged && r.payment?.status !== 'paid'
+  const canPay    = readyForPayment && r.terms_acknowledged && r.payment?.status !== 'paid'
   const hasPaid   = r && r.payment?.status === 'paid'
   const awaitingApproval = r && r.status === 'pending' && hasPaid
 
@@ -68,6 +87,9 @@ export default function ReservationDetailModal({ reservationId, onClose }) {
 
   const footer = r && (
     <div className="flex flex-wrap items-center gap-2">
+      {awaitingAdminApproval && (
+        <span className="text-sm text-[#B7950B]">Awaiting admin approval before payment.</span>
+      )}
       {needTerms && (
         <Button size="sm" onClick={() => toast.info('Please review your terms below.')}>
           Review Terms
@@ -77,7 +99,7 @@ export default function ReservationDetailModal({ reservationId, onClose }) {
         <Button size="sm" onClick={() => setShowPayment(true)}>Proceed to Payment</Button>
       )}
       {awaitingApproval && (
-        <span className="text-sm text-[#B7950B]">Payment received — awaiting staff approval.</span>
+        <span className="text-sm text-[#B7950B]">Payment received — confirming your reservation…</span>
       )}
       {hasPaid && (
         <Button variant="outline" size="sm" onClick={() => setShowReceipt(true)}>View Receipt</Button>
@@ -85,6 +107,11 @@ export default function ReservationDetailModal({ reservationId, onClose }) {
       {hasPaid && (
         <Button variant="outline" size="sm" onClick={downloadPdf} className="flex items-center gap-1.5">
           <Download className="h-3.5 w-3.5" /> Download PDF
+        </Button>
+      )}
+      {r?.authorization_letter_path && (
+        <Button variant="outline" size="sm" onClick={downloadAuthorizationLetter} className="flex items-center gap-1.5">
+          <Download className="h-3.5 w-3.5" /> Your Authorization Letter
         </Button>
       )}
       {canCancel && (

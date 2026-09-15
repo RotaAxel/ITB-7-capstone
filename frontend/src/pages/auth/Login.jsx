@@ -32,6 +32,10 @@ export default function Login() {
     const result = await login(email, password)
 
     if (!result.success) {
+      if (result.needsVerification) {
+        navigate(`/verify-email?email=${encodeURIComponent(result.email)}`, { replace: true })
+        return
+      }
       setApiError(result.message)
       return
     }
@@ -71,14 +75,18 @@ export default function Login() {
             <div className="w-40 h-24 bg-white rounded-2xl flex items-center justify-center mx-auto mb-5 shadow-lg p-2.5 border border-[#FADBD8]">
               <img src="/logoCabs.png" alt="CABS — Cabuyao Athletes Basic School" className="w-full h-full object-contain" />
             </div>
-            <p className="text-white/60 text-xs max-w-[200px] mx-auto leading-relaxed">
+            <p className="text-white/70 text-sm max-w-[220px] mx-auto leading-relaxed">
               Online facility reservation — book sports facilities anytime, anywhere.
             </p>
             <div className="mt-8 grid grid-cols-3 gap-3 text-center">
-              {[['Fast', 'Instant booking'], ['Secure', 'Safe payments'], ['Easy', 'Simple process']].map(([title, sub]) => (
+              {[
+                ['Fast',     'Instant confirmation'],
+                ['Booking',  'Reserve in seconds'],
+                ['Security', 'Protected payments'],
+              ].map(([title, sub]) => (
                 <div key={title} className="bg-white rounded-xl p-3 border border-[#FADBD8] shadow-sm">
-                  <p className="text-[#C0392B] font-bold text-xs">{title}</p>
-                  <p className="text-[#1C2833] text-[10px] mt-0.5">{sub}</p>
+                  <p className="text-[#C0392B] font-bold text-sm">{title}</p>
+                  <p className="text-[#1C2833] text-xs mt-1 leading-snug">{sub}</p>
                 </div>
               ))}
             </div>
@@ -121,7 +129,12 @@ export default function Login() {
               </div>
 
               <div>
-                <Label htmlFor="password" required>Password</Label>
+                <div className="flex items-center justify-between">
+                  <Label htmlFor="password" required>Password</Label>
+                  <Link to="/forgot-password" className="text-xs font-medium text-[#C0392B] hover:text-[#96281B]">
+                    Forgot password?
+                  </Link>
+                </div>
                 <div className="relative">
                   <Input
                     id="password"

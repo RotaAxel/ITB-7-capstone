@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
-import { CheckCircle2, ChevronLeft, ChevronRight, FileText } from 'lucide-react'
+import { CheckCircle2, ChevronLeft, ChevronRight, FileText, Clock, Upload, FileCheck, X } from 'lucide-react'
 import api from '@/api/axios'
 import Modal from '@/components/ui/Modal'
 import Badge from '@/components/ui/Badge'
@@ -19,13 +19,13 @@ const termsFor = type => [
     heading: '1. Reservation Policy',
     body: type === 'book'
       ? 'All bookings are subject to availability. A "Book" reservation is confirmed automatically as soon as full payment is received — no staff approval is required.'
-      : 'All reservations are subject to availability. A "Reserve" request is only confirmed after full payment of the booking fee and approval by CABS administration.',
+      : 'All reservations are subject to availability. A "Reserve" request must first be reviewed and approved by CABS administration. You\'ll only be asked to pay once it\'s approved — payment then confirms it.',
   },
   {
     heading: '2. Payment',
     body: type === 'book'
       ? 'Full payment is required to instantly confirm your booking. Accepted methods include GCash, Maya, and online banking.'
-      : 'Full payment is required before your reservation can be reviewed for approval. Accepted methods include GCash, Maya, and online banking. Unpaid requests may be forfeited if payment is not completed promptly.',
+      : 'Once your reservation request is approved, full payment will be required to confirm it. Accepted methods include GCash, Maya, and online banking. Approved requests left unpaid for too long may be forfeited.',
   },
   {
     heading: '3. Cancellation & Refund',
@@ -66,6 +66,7 @@ export default function NewReservationModal({ onClose, preselectedFacility = '' 
     selected_amenities:     [],
   })
   const [errors,  setErrors]  = useState({})
+  const [letterFile, setLetterFile] = useState(null)
   const [agreed,  setAgreed]  = useState(false)
   const [createdId,   setCreatedId]   = useState(null)
   const [showReceipt, setShowReceipt] = useState(false)
@@ -95,7 +96,9 @@ export default function NewReservationModal({ onClose, preselectedFacility = '' 
   const mutation = useMutation({
     mutationFn: data => api.post('/reservations', data),
     onSuccess: res => {
-      toast.success(form.type === 'book' ? 'Booking submitted! Complete payment to continue.' : 'Reservation submitted! Complete payment to continue.')
+      toast.success(form.type === 'book'
+        ? 'Booking submitted! Complete payment to continue.'
+        : 'Reservation request submitted! An admin will review it before you can pay.')
       queryClient.invalidateQueries({ queryKey: ['reservations'] })
       setCreatedId(res.data.id)
     },
@@ -142,6 +145,8 @@ export default function NewReservationModal({ onClose, preselectedFacility = '' 
     if (!form.number_of_participants || n < 1) errs.number_of_participants = 'Participants must be at least 1.'
     if (facilityDetail?.capacity && n > facilityDetail.capacity)
       errs.number_of_participants = `Exceeds facility capacity of ${facilityDetail.capacity}.`
+    if (facilityDetail?.requires_authorization_letter && !letterFile)
+      errs.authorization_letter = `${facilityDetail.name} requires an authorization letter to be attached.`
     setErrors(errs)
     return Object.keys(errs).length === 0
   }
@@ -162,6 +167,24 @@ export default function NewReservationModal({ onClose, preselectedFacility = '' 
   }
 
   const submit = () => {
+    // Only switch to multipart when there's a file to send — keeps the plain-JSON
+    // path (and every facility that doesn't need a letter) untouched.
+    if (letterFile) {
+      const fd = new FormData()
+      fd.append('facility_id',            form.facility_id)
+      fd.append('reservation_date',       form.reservation_date)
+      fd.append('start_time',             form.start_time)
+      fd.append('end_time',               form.end_time)
+      fd.append('purpose',                form.purpose)
+      fd.append('number_of_participants', form.number_of_participants)
+      form.selected_amenities.forEach(id => fd.append('selected_amenities[]', id))
+      fd.append('terms_acknowledged', 'true')
+      fd.append('type',                form.type)
+      fd.append('authorization_letter', letterFile)
+      mutation.mutate(fd)
+      return
+    }
+
     mutation.mutate({
       facility_id:            Number(form.facility_id),
       reservation_date:       form.reservation_date,
@@ -186,11 +209,37 @@ export default function NewReservationModal({ onClose, preselectedFacility = '' 
     ? durationHours * Number(activeFacility.price_per_hour)
     : 0
 
-  // Reservation created — hand off straight to payment instead of closing the wizard.
+  // Reservation created. "Book" hands off straight to payment. "Reserve" must
+  // wait for an admin to approve the request first — payment only unlocks once
+  // it does (see PaymentController::paymentNotYetAllowedMessage on the backend) —
+  // so show a waiting confirmation instead of a payment step that would 422.
   if (createdId) {
     if (showReceipt) {
       return <ReceiptModal reservationId={createdId} onClose={onClose} />
     }
+
+    if (form.type === 'reserve') {
+      return (
+        <Modal
+          title="Reservation Submitted"
+          onClose={onClose}
+          footer={<Button onClick={onClose}>Done</Button>}
+        >
+          <div className="text-center py-6">
+            <div className="w-14 h-14 rounded-full bg-[#FEF9E7] flex items-center justify-center mx-auto mb-4">
+              <Clock className="h-7 w-7 text-[#B7950B]" />
+            </div>
+            <h3 className="font-semibold text-[#1C2833] mb-1.5">Awaiting Admin Approval</h3>
+            <p className="text-sm text-[#1C2833] max-w-sm mx-auto">
+              Your reservation request has been submitted. An admin needs to review and approve it
+              before you can pay — you'll get a notification, and can complete payment from
+              <strong> My Reservations</strong> once it's approved.
+            </p>
+          </div>
+        </Modal>
+      )
+    }
+
     return (
       <PaymentModal
         reservationId={createdId}
@@ -387,6 +436,43 @@ export default function NewReservationModal({ onClose, preselectedFacility = '' 
               {errors.number_of_participants && <p className="text-red-500 text-xs mt-1">{errors.number_of_participants}</p>}
             </div>
 
+            {facilityDetail?.requires_authorization_letter && (
+              <div>
+                <Label>Authorization Letter *</Label>
+                <p className="text-xs text-[#1C2833] mt-0.5 mb-1.5">
+                  {facilityDetail.name} requires a signed authorization letter (PDF or image) to be attached to this request.
+                </p>
+                {letterFile ? (
+                  <div className="flex items-center justify-between gap-2 p-2.5 rounded-lg border border-[#A9DFBF] bg-[#EAFAF1]">
+                    <span className="flex items-center gap-2 min-w-0 text-sm text-[#1E8449]">
+                      <FileCheck className="h-4 w-4 shrink-0" />
+                      <span className="truncate">{letterFile.name}</span>
+                    </span>
+                    <button type="button" onClick={() => setLetterFile(null)} className="p-1 rounded text-[#1E8449] hover:bg-[#D5F5E3] shrink-0">
+                      <X className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                ) : (
+                  <label className={`flex flex-col items-center justify-center gap-1.5 py-5 rounded-lg border-2 border-dashed cursor-pointer transition-colors ${
+                    errors.authorization_letter ? 'border-[#C0392B] bg-[#FADBD8]/10' : 'border-[#E5E7E9] hover:bg-gray-50'
+                  }`}>
+                    <Upload className="h-5 w-5 text-[#1C2833]" />
+                    <span className="text-sm text-[#1C2833]">Click to upload — PDF, JPG, or PNG (max 5MB)</span>
+                    <input
+                      type="file"
+                      accept=".pdf,.jpg,.jpeg,.png"
+                      className="hidden"
+                      onChange={e => {
+                        const file = e.target.files[0]
+                        if (file) { setLetterFile(file); setErrors(er => ({ ...er, authorization_letter: '' })) }
+                      }}
+                    />
+                  </label>
+                )}
+                {errors.authorization_letter && <p className="text-red-500 text-xs mt-1">{errors.authorization_letter}</p>}
+              </div>
+            )}
+
             {facilityDetail?.amenities?.filter(a => a.is_available).length > 0 && (
               <div>
                 <Label>Amenities (optional)</Label>
@@ -459,6 +545,9 @@ export default function NewReservationModal({ onClose, preselectedFacility = '' 
                     ? facilityDetail?.amenities?.filter(a => form.selected_amenities.includes(a.id)).map(a => a.name).join(', ')
                     : 'None',
                 ],
+                ...(facilityDetail?.requires_authorization_letter
+                  ? [['Authorization Letter', letterFile?.name ?? '—']]
+                  : []),
                 ['Terms',        <span key="t" className="text-[#27AE60] font-medium">Accepted</span>],
               ].map(([label, value]) => (
                 <div key={label} className="flex gap-4 px-4 py-2.5">
@@ -468,10 +557,9 @@ export default function NewReservationModal({ onClose, preselectedFacility = '' 
               ))}
             </div>
             <p className="text-sm text-[#1C2833] bg-[#FADBD8]/20 p-3 rounded-lg border border-[#F1948A]/20">
-              After submission, you'll be asked to <strong>complete payment</strong>.
               {form.type === 'book'
-                ? ' Once payment is received, your booking is confirmed instantly — no approval wait.'
-                : ' Once payment is received, your reservation will be reviewed for final approval.'}
+                ? <>After submission, you'll be asked to <strong>complete payment</strong> right away. Once received, your booking is confirmed instantly — no approval wait.</>
+                : <>After submission, an admin will <strong>review and approve</strong> your request first. You'll only be asked to pay once it's approved.</>}
             </p>
           </div>
         )}

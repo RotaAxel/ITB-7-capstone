@@ -26,7 +26,10 @@ export default function StaffDashboard() {
   const today    = new Date()
   const weekStart = startOfWeek(today)
   const pending   = allRes.filter(r => r.status === 'pending')
-  const needsReview = pending.filter(r => r.payment?.status === 'paid')
+  // "Reserve" requests need review while still unpaid (approval unlocks their
+  // payment step); "Book" reservations only need a manual look if payment
+  // already went through but the auto-confirm webhook hasn't landed yet.
+  const needsReview = pending.filter(r => r.type === 'reserve' || r.payment?.status === 'paid')
   const todayRes  = allRes.filter(r => r.reservation_date && isToday(parseISO(r.reservation_date)) && (r.status === 'confirmed' || (r.status === 'pending' && r.payment?.status === 'paid')))
   const approvedWk = allRes.filter(r => r.status === 'confirmed' && r.reviewed_at && new Date(r.reviewed_at) >= weekStart)
   const active    = allRes.filter(r => ['pending','confirmed'].includes(r.status))
@@ -126,7 +129,7 @@ export default function StaffDashboard() {
                         </td>
                         <td className="px-4 py-2.5">
                           <div className="flex items-center gap-1">
-                            {r.payment?.status === 'paid' ? (
+                            {r.type === 'reserve' || r.payment?.status === 'paid' ? (
                               <button onClick={() => approveMutation.mutate(r.id)} disabled={approveMutation.isPending}
                                 className="p-1.5 rounded-lg bg-[#EAFAF1] text-[#1E8449] hover:bg-[#A9DFBF] transition-colors cursor-pointer" title="Approve">
                                 <Check className="h-3.5 w-3.5" />
@@ -134,7 +137,7 @@ export default function StaffDashboard() {
                             ) : (
                               <span className="text-[10px] text-[#B7950B]">Awaiting payment</span>
                             )}
-                            {r.payment?.status !== 'paid' && (
+                            {(r.type === 'reserve' || r.payment?.status !== 'paid') && (
                               <button onClick={() => setRejectTarget(r)}
                                 className="p-1.5 rounded-lg bg-[#FADBD8] text-[#C0392B] hover:bg-[#F1948A] transition-colors cursor-pointer" title="Reject">
                                 <XIcon className="h-3.5 w-3.5" />

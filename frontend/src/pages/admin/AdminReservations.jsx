@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { format, parseISO } from 'date-fns'
 import { toast } from 'sonner'
-import { Check, X, ChevronLeft, ChevronRight, CalendarDays, Clock, ClipboardList, AlertCircle, CheckCircle2, Banknote, Eye } from 'lucide-react'
+import { Check, X, ChevronLeft, ChevronRight, CalendarDays, Clock, ClipboardList, AlertCircle, CheckCircle2, Banknote, Eye, FileCheck } from 'lucide-react'
 import api from '@/api/axios'
 import { Card, CardContent } from '@/components/ui/Card'
 import Badge from '@/components/ui/Badge'
@@ -60,6 +60,23 @@ export default function AdminReservations() {
   const [rejectNote,  setRejectNote]  = useState('')
   const [detailModal, setDetailModal] = useState(null)
   const [receiptId,   setReceiptId]   = useState(null)
+
+  const downloadAuthorizationLetter = (id) => {
+    api.get(`/reservations/${id}/authorization-letter`, { responseType: 'blob' })
+      .then(res => {
+        // Extension varies (pdf/jpg/png) — infer it from the blob's MIME type rather
+        // than hardcoding one, since setting `a.download` overrides the filename the
+        // server suggested via Content-Disposition.
+        const ext = { 'application/pdf': 'pdf', 'image/jpeg': 'jpg', 'image/png': 'png' }[res.data.type] || 'bin'
+        const url = URL.createObjectURL(res.data)
+        const a   = document.createElement('a')
+        a.href = url
+        a.download = `authorization-letter-reservation-${id}.${ext}`
+        a.click()
+        URL.revokeObjectURL(url)
+      })
+      .catch(() => toast.error('Failed to download the authorization letter.'))
+  }
 
   const params = {
     page,
@@ -297,12 +314,18 @@ export default function AdminReservations() {
                       {/* Status + quick actions */}
                       <div className="col-span-2 flex flex-col items-end gap-2">
                         <div className="flex flex-wrap items-center justify-end gap-1">
+                          {r.authorization_letter_path && (
+                            <FileCheck className="h-3.5 w-3.5 text-[#8E44AD]" title="Authorization letter attached" />
+                          )}
                           <TypeBadge type={r.type} />
                           <Badge status={r.status} />
                         </div>
+                        {/* "Reserve" is approved before payment (unlocks it); "Book" pays
+                            first and auto-confirms, so its Approve here is just a manual
+                            fallback for a stuck payment webhook. */}
                         {r.status === 'pending' && (
                           <div className="flex gap-1" onClick={e => e.stopPropagation()}>
-                            {r.payment?.status === 'paid' ? (
+                            {r.type === 'reserve' || r.payment?.status === 'paid' ? (
                               <button
                                 onClick={() => approveMutation.mutate(r.id)}
                                 className="p-1.5 rounded-lg bg-green-50 text-green-600 hover:bg-green-100 transition-colors cursor-pointer"
@@ -313,7 +336,7 @@ export default function AdminReservations() {
                             ) : (
                               <span className="text-[11px] text-[#B7950B] self-center">Awaiting payment</span>
                             )}
-                            {r.payment?.status !== 'paid' && (
+                            {(r.type === 'reserve' || r.payment?.status !== 'paid') && (
                               <button
                                 onClick={() => { setRejectModal({ id: r.id, clientName: name }); setRejectNote('') }}
                                 className="p-1.5 rounded-lg bg-red-50 text-red-600 hover:bg-red-100 transition-colors cursor-pointer"
@@ -322,6 +345,18 @@ export default function AdminReservations() {
                                 <X className="h-3.5 w-3.5" />
                               </button>
                             )}
+                          </div>
+                        )}
+                        {r.status === 'approved' && (
+                          <div className="flex gap-1 items-center" onClick={e => e.stopPropagation()}>
+                            <span className="text-[11px] text-[#2980B9] self-center">Awaiting client payment</span>
+                            <button
+                              onClick={() => { setRejectModal({ id: r.id, clientName: name }); setRejectNote('') }}
+                              className="p-1.5 rounded-lg bg-red-50 text-red-600 hover:bg-red-100 transition-colors cursor-pointer"
+                              title="Revoke approval"
+                            >
+                              <X className="h-3.5 w-3.5" />
+                            </button>
                           </div>
                         )}
                       </div>
@@ -371,9 +406,12 @@ export default function AdminReservations() {
             onClose={() => setDetailModal(null)}
             footer={
               <div className="flex items-center justify-between gap-2">
+                {/* "Reserve" is approved before payment (unlocks it); "Book" pays
+                    first and auto-confirms, so its Approve here is just a manual
+                    fallback for a stuck payment webhook. */}
                 {r.status === 'pending' && (
                   <div className="flex items-center gap-2">
-                    {r.payment?.status === 'paid' ? (
+                    {r.type === 'reserve' || r.payment?.status === 'paid' ? (
                       <Button
                         loading={approveMutation.isPending}
                         onClick={() => approveMutation.mutate(r.id, { onSuccess: () => setDetailModal(null) })}
@@ -381,20 +419,35 @@ export default function AdminReservations() {
                         <Check className="h-3.5 w-3.5" /> Approve
                       </Button>
                     ) : (
-                      <>
-                        <span className="text-sm text-[#B7950B]">Awaiting payment</span>
-                        <Button
-                          variant="danger"
-                          onClick={() => {
-                            setDetailModal(null)
-                            setRejectModal({ id: r.id, clientName: r.user?.full_name ?? '' })
-                            setRejectNote('')
-                          }}
-                        >
-                          <X className="h-3.5 w-3.5" /> Reject
-                        </Button>
-                      </>
+                      <span className="text-sm text-[#B7950B]">Awaiting payment</span>
                     )}
+                    {(r.type === 'reserve' || r.payment?.status !== 'paid') && (
+                      <Button
+                        variant="danger"
+                        onClick={() => {
+                          setDetailModal(null)
+                          setRejectModal({ id: r.id, clientName: r.user?.full_name ?? '' })
+                          setRejectNote('')
+                        }}
+                      >
+                        <X className="h-3.5 w-3.5" /> Reject
+                      </Button>
+                    )}
+                  </div>
+                )}
+                {r.status === 'approved' && (
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm text-[#2980B9]">Awaiting client payment</span>
+                    <Button
+                      variant="danger"
+                      onClick={() => {
+                        setDetailModal(null)
+                        setRejectModal({ id: r.id, clientName: r.user?.full_name ?? '' })
+                        setRejectNote('')
+                      }}
+                    >
+                      <X className="h-3.5 w-3.5" /> Revoke Approval
+                    </Button>
                   </div>
                 )}
                 {r.status === 'confirmed' && (() => {
@@ -414,7 +467,7 @@ export default function AdminReservations() {
                     </span>
                   )
                 })()}
-                {r.status === 'pending' && r.payment?.status !== 'paid' && (
+                {['pending', 'approved'].includes(r.status) && r.payment?.status !== 'paid' && (
                   <Button
                     variant="danger"
                     loading={cancelMutation.isPending}
@@ -427,7 +480,7 @@ export default function AdminReservations() {
                     <X className="h-3.5 w-3.5" /> Cancel Reservation
                   </Button>
                 )}
-                {!['pending', 'confirmed'].includes(r.status) && <span />}
+                {!['pending', 'approved', 'confirmed'].includes(r.status) && <span />}
                 <Button variant="outline" onClick={() => setDetailModal(null)}>Close</Button>
               </div>
             }
@@ -467,6 +520,19 @@ export default function AdminReservations() {
                       className="flex items-center gap-1.5 text-[#2980B9] hover:underline font-medium"
                     >
                       <Eye className="h-3.5 w-3.5" /> View Receipt
+                    </button>
+                  </dd>
+                </div>
+              )}
+              {r.authorization_letter_path && (
+                <div className="flex gap-2">
+                  <dt className="text-[#1C2833] w-28 shrink-0">Auth. Letter</dt>
+                  <dd>
+                    <button
+                      onClick={() => downloadAuthorizationLetter(r.id)}
+                      className="flex items-center gap-1.5 text-[#2980B9] hover:underline font-medium"
+                    >
+                      <FileCheck className="h-3.5 w-3.5" /> Download Authorization Letter
                     </button>
                   </dd>
                 </div>

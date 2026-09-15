@@ -1,8 +1,8 @@
-import { useMemo, useState, useRef } from 'react'
+import { useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
-import { Plus, Pencil, Wrench, Trash2, MapPin, Users, Upload, X, Building2, CheckCircle2, AlertTriangle, Ban, Lock, RotateCcw, ChevronLeft, ChevronRight } from 'lucide-react'
+import { Plus, Pencil, Wrench, Trash2, MapPin, Users, Building2, CheckCircle2, AlertTriangle, Ban, ChevronLeft, ChevronRight, FileCheck } from 'lucide-react'
 import api from '@/api/axios'
 import { Card, CardContent } from '@/components/ui/Card'
 import Badge from '@/components/ui/Badge'
@@ -15,6 +15,7 @@ import SearchAutocomplete from '@/components/ui/SearchAutocomplete'
 
 const BLANK_FACILITY = {
   name: '', description: '', location: '', capacity: '', price_per_hour: '', status: 'available',
+  requires_authorization_letter: false,
 }
 
 const BLANK_MAINTENANCE = {
@@ -26,7 +27,6 @@ const FILTERS = [
   { value: 'available',         label: 'Available'   },
   { value: 'under_maintenance', label: 'Maintenance' },
   { value: 'unavailable',       label: 'Unavailable' },
-  { value: 'closed',            label: 'Closed'      },
 ]
 
 function getSportTheme(name = '') {
@@ -43,7 +43,7 @@ function getSportTheme(name = '') {
   return { color: '#C0392B', dark: '#96281B', label: 'Sports Facility' }
 }
 
-function FacilityRow({ facility, onEdit, onMaint, onClose, onReopen, onDelete }) {
+function FacilityRow({ facility, onEdit, onMaint, onDelete }) {
   const theme = getSportTheme(facility.name)
   const navigate = useNavigate()
   return (
@@ -64,7 +64,12 @@ function FacilityRow({ facility, onEdit, onMaint, onClose, onReopen, onDelete })
             )}
           </div>
           <div className="min-w-0">
-            <p className="font-semibold text-[#1C2833] text-sm truncate">{facility.name}</p>
+            <p className="font-semibold text-[#1C2833] text-sm truncate flex items-center gap-1.5">
+              {facility.name}
+              {facility.requires_authorization_letter && (
+                <FileCheck className="h-3.5 w-3.5 text-[#8E44AD] shrink-0" title="Requires authorization letter" />
+              )}
+            </p>
             {facility.description && (
               <p className="text-xs text-[#1C2833] truncate max-w-[200px]">{facility.description}</p>
             )}
@@ -99,27 +104,6 @@ function FacilityRow({ facility, onEdit, onMaint, onClose, onReopen, onDelete })
           <Button variant="ghost" size="sm" onClick={() => onMaint(facility)} title="Maintenance">
             <Wrench className="h-3.5 w-3.5" />
           </Button>
-          {facility.status === 'closed' ? (
-            <Button
-              variant="ghost"
-              size="sm"
-              className="text-green-600 hover:text-green-800 hover:bg-green-50"
-              onClick={() => onReopen({ id: facility.id, name: facility.name })}
-              title="Reopen facility"
-            >
-              <RotateCcw className="h-3.5 w-3.5" />
-            </Button>
-          ) : (
-            <Button
-              variant="ghost"
-              size="sm"
-              className="text-orange-500 hover:text-orange-700 hover:bg-orange-50"
-              onClick={() => onClose({ id: facility.id, name: facility.name })}
-              title="Close facility"
-            >
-              <Lock className="h-3.5 w-3.5" />
-            </Button>
-          )}
           <Button
             variant="ghost"
             size="sm"
@@ -135,62 +119,6 @@ function FacilityRow({ facility, onEdit, onMaint, onClose, onReopen, onDelete })
   )
 }
 
-/* ── Image Upload Field ──────────────────────────────────────────────────── */
-function ImageUploadField({ preview, onFileChange, onClear }) {
-  const inputRef = useRef(null)
-
-  const handleDrop = e => {
-    e.preventDefault()
-    const file = e.dataTransfer.files[0]
-    if (file && file.type.startsWith('image/')) onFileChange(file)
-  }
-
-  return (
-    <div>
-      <Label>Facility Photo</Label>
-      <div className="mt-1 relative">
-        {preview ? (
-          <div className="relative rounded-lg overflow-hidden border border-[#E5E7E9] h-48">
-            <img src={preview} alt="Preview" className="w-full h-full object-cover" />
-            <button
-              type="button"
-              onClick={onClear}
-              className="absolute top-2 right-2 bg-black/60 hover:bg-black/80 text-white rounded-full p-1 transition-colors"
-            >
-              <X className="h-4 w-4" />
-            </button>
-            <div className="absolute bottom-0 inset-x-0 bg-black/40 text-white text-xs text-center py-1">
-              Click × to remove or drop a new photo
-            </div>
-          </div>
-        ) : (
-          <div
-            onClick={() => inputRef.current?.click()}
-            onDrop={handleDrop}
-            onDragOver={e => e.preventDefault()}
-            className="flex flex-col items-center justify-center h-48 rounded-lg border-2 border-dashed border-[#E5E7E9] hover:border-[#C0392B] hover:bg-[#FADBD8]/10 cursor-pointer transition-colors"
-          >
-            <Upload className="h-8 w-8 text-[#1C2833] mb-2" />
-            <p className="text-sm font-medium text-[#1C2833]">Click to upload or drag & drop</p>
-            <p className="text-xs text-[#1C2833] mt-0.5">PNG, JPG, WEBP — max 2 MB</p>
-          </div>
-        )}
-        <input
-          ref={inputRef}
-          type="file"
-          accept="image/*"
-          className="hidden"
-          onChange={e => {
-            const file = e.target.files[0]
-            if (file) onFileChange(file)
-            e.target.value = ''
-          }}
-        />
-      </div>
-    </div>
-  )
-}
-
 const PAGE_SIZE = 9
 
 /* ── Main page ───────────────────────────────────────────────────────────── */
@@ -202,14 +130,10 @@ export default function AdminFacilities() {
 
   const [facilityModal, setFacilityModal] = useState(null)
   const [maintenanceModal, setMaintenanceModal] = useState(null)
-  const [closeConfirm,  setCloseConfirm]  = useState(null)
-  const [reopenConfirm, setReopenConfirm] = useState(null)
   const [deleteConfirm, setDeleteConfirm] = useState(null)
 
-  const [form,         setForm]         = useState(BLANK_FACILITY)
-  const [maint,        setMaint]        = useState(BLANK_MAINTENANCE)
-  const [imageFile,    setImageFile]    = useState(null)   // File | null
-  const [imagePreview, setImagePreview] = useState(null)   // string | null
+  const [form,  setForm]  = useState(BLANK_FACILITY)
+  const [maint, setMaint] = useState(BLANK_MAINTENANCE)
 
   const { data: facilities = [], isLoading } = useQuery({
     queryKey: ['facilities'],
@@ -242,7 +166,7 @@ export default function AdminFacilities() {
     fd.append('capacity',       form.capacity)
     fd.append('price_per_hour', form.price_per_hour)
     fd.append('status',         form.status)
-    if (imageFile) fd.append('image', imageFile)
+    fd.append('requires_authorization_letter', form.requires_authorization_letter ? 'true' : 'false')
     return fd
   }
 
@@ -280,26 +204,6 @@ export default function AdminFacilities() {
     onError: err => toast.error(err.response?.data?.message || 'Failed to update.'),
   })
 
-  const closeMutation = useMutation({
-    mutationFn: id => api.post(`/admin/facilities/${id}/maintenance`, { status: 'closed' }),
-    onSuccess: () => {
-      toast.success('Facility closed.')
-      setCloseConfirm(null)
-      queryClient.invalidateQueries({ queryKey: ['facilities'] })
-    },
-    onError: err => toast.error(err.response?.data?.message || 'Failed to close facility.'),
-  })
-
-  const reopenMutation = useMutation({
-    mutationFn: id => api.post(`/admin/facilities/${id}/maintenance`, { status: 'available' }),
-    onSuccess: () => {
-      toast.success('Facility reopened.')
-      setReopenConfirm(null)
-      queryClient.invalidateQueries({ queryKey: ['facilities'] })
-    },
-    onError: err => toast.error(err.response?.data?.message || 'Failed to reopen facility.'),
-  })
-
   const deleteMutation = useMutation({
     mutationFn: id => api.delete(`/admin/facilities/${id}`),
     onSuccess: () => {
@@ -313,23 +217,13 @@ export default function AdminFacilities() {
   const setF = (k, v) => setForm(f  => ({ ...f,  [k]: v }))
   const setM = (k, v) => setMaint(m => ({ ...m, [k]: v }))
 
-  const resetImage = () => { setImageFile(null); setImagePreview(null) }
-
-  const handleFileChange = file => {
-    setImageFile(file)
-    setImagePreview(URL.createObjectURL(file))
-  }
-
   const openCreate = () => {
     setForm(BLANK_FACILITY)
-    resetImage()
     setFacilityModal('create')
   }
 
   const openEdit = f => {
     setForm({ ...f })
-    setImageFile(null)
-    setImagePreview(f.image_url || null)
     setFacilityModal(f)
   }
 
@@ -362,7 +256,6 @@ export default function AdminFacilities() {
   const countAvailable    = facilities.filter(f => f.status === 'available').length
   const countMaintenance  = facilities.filter(f => f.status === 'under_maintenance').length
   const countUnavailable  = facilities.filter(f => f.status === 'unavailable').length
-  const countClosed       = facilities.filter(f => f.status === 'closed').length
 
   if (isLoading) {
     return (
@@ -415,7 +308,7 @@ export default function AdminFacilities() {
           { label: 'Total Facilities',   value: facilities.length, icon: Building2,     color: 'text-[#2980B9] bg-[#D6EAF8]' },
           { label: 'Available',          value: countAvailable,    icon: CheckCircle2,  color: 'text-[#27AE60] bg-[#D5F5E3]' },
           { label: 'Under Maintenance',  value: countMaintenance,  icon: AlertTriangle, color: 'text-[#F39C12] bg-[#FEF9E7]' },
-          { label: 'Closed / Unavailable', value: countClosed + countUnavailable, icon: Ban, color: 'text-[#C0392B] bg-[#FADBD8]' },
+          { label: 'Unavailable',        value: countUnavailable,  icon: Ban,          color: 'text-[#C0392B] bg-[#FADBD8]' },
         ].map(({ label, value, icon: Icon, color }) => (
           <Card key={label} className="hover:shadow-md transition-shadow">
             <CardContent className="py-4">
@@ -480,8 +373,6 @@ export default function AdminFacilities() {
                       facility={facility}
                       onEdit={openEdit}
                       onMaint={openMaint}
-                      onClose={setCloseConfirm}
-                      onReopen={setReopenConfirm}
                       onDelete={setDeleteConfirm}
                     />
                   ))}
@@ -550,18 +441,6 @@ export default function AdminFacilities() {
           }
         >
           <div className="space-y-4">
-            {/* Image upload */}
-            <ImageUploadField
-              preview={imagePreview}
-              onFileChange={handleFileChange}
-              onClear={() => {
-                resetImage()
-                // If editing and the facility had an existing image, clearing only removes
-                // the local preview; the server image is only replaced when a new file is uploaded.
-                // To explicitly remove the server image a separate "remove" endpoint would be needed.
-              }}
-            />
-
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div className="sm:col-span-2">
                 <Label>Name *</Label>
@@ -621,8 +500,24 @@ export default function AdminFacilities() {
                   <option value="available">Available</option>
                   <option value="under_maintenance">Under Maintenance</option>
                   <option value="unavailable">Unavailable</option>
-                  <option value="closed">Closed</option>
                 </select>
+              </div>
+              <div className="sm:col-span-2">
+                <label className="flex items-start gap-2.5 p-3 rounded-lg border border-[#E5E7E9] cursor-pointer hover:bg-gray-50 transition-colors">
+                  <input
+                    type="checkbox"
+                    checked={form.requires_authorization_letter}
+                    onChange={e => setF('requires_authorization_letter', e.target.checked)}
+                    className="mt-0.5 h-4 w-4 rounded border-[#E5E7E9] text-[#C0392B] shrink-0"
+                  />
+                  <span>
+                    <span className="block text-sm font-medium text-[#1C2833]">Requires Authorization Letter</span>
+                    <span className="block text-xs text-[#1C2833] mt-0.5">
+                      Clients must upload a signed authorization letter (PDF or image) when reserving this facility,
+                      or their request will be rejected before it reaches you.
+                    </span>
+                  </span>
+                </label>
               </div>
             </div>
           </div>
@@ -657,7 +552,6 @@ export default function AdminFacilities() {
                 <option value="available">Available</option>
                 <option value="under_maintenance">Under Maintenance</option>
                 <option value="unavailable">Unavailable</option>
-                <option value="closed">Closed</option>
               </select>
             </div>
             <div>
@@ -691,57 +585,6 @@ export default function AdminFacilities() {
               </div>
             </div>
           </div>
-        </Modal>
-      )}
-
-      {/* Close confirm modal */}
-      {closeConfirm && (
-        <Modal
-          title="Close Facility"
-          onClose={() => setCloseConfirm(null)}
-          size="sm"
-          footer={
-            <div className="flex justify-end gap-2">
-              <Button variant="outline" onClick={() => setCloseConfirm(null)}>Cancel</Button>
-              <Button
-                loading={closeMutation.isPending}
-                onClick={() => closeMutation.mutate(closeConfirm.id)}
-                className="bg-orange-500 hover:bg-orange-600"
-              >
-                <Lock className="h-4 w-4" /> Close Facility
-              </Button>
-            </div>
-          }
-        >
-          <p className="text-sm text-gray-600">
-            Close <strong>{closeConfirm.name}</strong>? It will be marked as <em>Closed</em> and
-            will no longer accept new reservations. You can reopen it at any time.
-          </p>
-        </Modal>
-      )}
-
-      {/* Reopen confirm modal */}
-      {reopenConfirm && (
-        <Modal
-          title="Reopen Facility"
-          onClose={() => setReopenConfirm(null)}
-          size="sm"
-          footer={
-            <div className="flex justify-end gap-2">
-              <Button variant="outline" onClick={() => setReopenConfirm(null)}>Cancel</Button>
-              <Button
-                loading={reopenMutation.isPending}
-                onClick={() => reopenMutation.mutate(reopenConfirm.id)}
-              >
-                <RotateCcw className="h-4 w-4" /> Reopen Facility
-              </Button>
-            </div>
-          }
-        >
-          <p className="text-sm text-gray-600">
-            Reopen <strong>{reopenConfirm.name}</strong>? It will be set back to <em>Available</em> and
-            clients will be able to make reservations again.
-          </p>
         </Modal>
       )}
 

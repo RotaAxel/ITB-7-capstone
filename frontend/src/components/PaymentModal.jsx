@@ -69,7 +69,7 @@ export default function PaymentModal({ reservationId, onClose, onViewReceipt }) 
   const titles = {
     idle:   'Complete Payment',
     opened: 'Complete Your Payment',
-    success: r?.type === 'book' ? 'Booking Confirmed' : 'Payment Received',
+    success: r?.type === 'book' ? 'Booking Confirmed' : 'Reservation Confirmed',
     failed: 'Payment Not Confirmed',
   }
 
@@ -79,16 +79,18 @@ export default function PaymentModal({ reservationId, onClose, onViewReceipt }) 
     body = <div className="flex justify-center py-8"><Spinner size="lg" /></div>
 
   } else if (phase === 'success') {
+    // Payment only unlocks for a "reserve" once it's already been approved (see
+    // PaymentController), so a successful payment confirms it outright either way.
     body = (
       <div className="flex flex-col items-center text-center py-6">
         <CheckCircle2 className="h-16 w-16 text-[#27AE60] mb-4" />
         <h2 className="text-xl font-bold text-[#1C2833] mb-2">
-          {r?.type === 'book' ? 'Booking Confirmed!' : 'Payment Received!'}
+          {r?.type === 'book' ? 'Booking Confirmed!' : 'Reservation Confirmed!'}
         </h2>
         <p className="text-[#1C2833] mb-6">
           {r?.type === 'book'
             ? 'Your booking is confirmed — no approval needed.'
-            : 'Your reservation is now awaiting staff approval.'}
+            : 'Your reservation is confirmed!'}
         </p>
         <div className="flex gap-3 flex-wrap justify-center">
           {onViewReceipt && (

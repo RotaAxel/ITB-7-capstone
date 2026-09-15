@@ -13,13 +13,13 @@ const termsFor = type => [
     heading: '1. Reservation Policy',
     body: type === 'book'
       ? 'All bookings are subject to availability. A "Book" reservation is confirmed automatically as soon as full payment is received — no staff approval is required.'
-      : 'All reservations are subject to availability. A "Reserve" request is only confirmed after full payment of the booking fee and approval by CABS administration.',
+      : 'All reservations are subject to availability. A "Reserve" request must first be reviewed and approved by CABS administration — you\'re only asked to pay once it\'s approved, and payment then confirms it.',
   },
   {
     heading: '2. Payment',
     body: type === 'book'
       ? 'Full payment is required to instantly confirm your booking. Accepted methods include GCash, Maya, and online banking.'
-      : 'Full payment is required before your reservation can be reviewed for approval. Accepted methods include GCash, Maya, and online banking. Unpaid requests may be forfeited if payment is not completed promptly.',
+      : 'Since your request has already been approved, full payment now confirms your reservation. Accepted methods include GCash, Maya, and online banking. Unpaid approved requests may be forfeited if payment is not completed promptly.',
   },
   {
     heading: '3. Cancellation & Refund',

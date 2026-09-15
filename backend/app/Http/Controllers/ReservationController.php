@@ -7,6 +7,7 @@ use App\Models\Payment;
 use App\Models\Reservation;
 use App\Services\NotificationService;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Storage;
 
 class ReservationController extends Controller
 {
@@ -56,6 +57,7 @@ class ReservationController extends Controller
             'selected_amenities.*'   => ['integer', 'exists:amenities,id'],
             'terms_acknowledged'     => ['boolean'],
             'type'                   => ['required', 'in:reserve,book'],
+            'authorization_letter'   => ['nullable', 'file', 'mimes:pdf,jpg,jpeg,png', 'max:5120'],
         ]);
 
         $facility = Facility::findOrFail($validated['facility_id']);
@@ -63,6 +65,12 @@ class ReservationController extends Controller
         if ($facility->status !== 'available') {
             return response()->json([
                 'message' => "This facility is currently {$facility->status} and cannot be reserved.",
+            ], 422);
+        }
+
+        if ($facility->requires_authorization_letter && !$request->hasFile('authorization_letter')) {
+            return response()->json([
+                'message' => "{$facility->name} requires an authorization letter to be attached before you can submit a reservation.",
             ], 422);
         }
 
@@ -97,19 +105,27 @@ class ReservationController extends Controller
         $hours   = max(0, ($endTs - $startTs) / 3600);
         $amount  = round($facility->price_per_hour * $hours, 2);
 
+        // Private ("local") disk, not the public one facility images use — this can
+        // be a personally-identifying document, served only via an authenticated
+        // download route rather than a guessable public URL.
+        $letterPath = $request->hasFile('authorization_letter')
+            ? $request->file('authorization_letter')->store('authorization-letters', 'local')
+            : null;
+
         $reservation = Reservation::create([
-            'user_id'                => $request->user()->id,
-            'facility_id'            => $validated['facility_id'],
-            'purpose'                => $validated['purpose'],
-            'number_of_participants' => $validated['number_of_participants'],
-            'reservation_date'       => $validated['reservation_date'],
-            'start_time'             => $validated['start_time'],
-            'end_time'               => $validated['end_time'],
-            'selected_amenities'     => $validated['selected_amenities'] ?? null,
-            'status'                 => 'pending',
-            'type'                   => $validated['type'],
-            'terms_acknowledged'     => $validated['terms_acknowledged'] ?? false,
-            'terms_acknowledged_at'  => ($validated['terms_acknowledged'] ?? false) ? now() : null,
+            'user_id'                   => $request->user()->id,
+            'facility_id'               => $validated['facility_id'],
+            'purpose'                   => $validated['purpose'],
+            'number_of_participants'    => $validated['number_of_participants'],
+            'reservation_date'          => $validated['reservation_date'],
+            'start_time'                => $validated['start_time'],
+            'end_time'                  => $validated['end_time'],
+            'selected_amenities'        => $validated['selected_amenities'] ?? null,
+            'status'                    => 'pending',
+            'type'                      => $validated['type'],
+            'terms_acknowledged'        => $validated['terms_acknowledged'] ?? false,
+            'terms_acknowledged_at'     => ($validated['terms_acknowledged'] ?? false) ? now() : null,
+            'authorization_letter_path' => $letterPath,
         ]);
 
         Payment::create([
@@ -167,6 +183,33 @@ class ReservationController extends Controller
         return response()->json($reservation);
     }
 
+    // ─── Authorization Letter (download) ──────────────────────────────────────
+
+    public function downloadAuthorizationLetter(Request $request, $id)
+    {
+        $user        = $request->user();
+        $reservation = Reservation::findOrFail($id);
+
+        if ($user->isClient() && $reservation->user_id !== $user->id) {
+            return response()->json(['message' => 'Forbidden.'], 403);
+        }
+
+        if (!$reservation->authorization_letter_path) {
+            return response()->json(['message' => 'No authorization letter was submitted for this reservation.'], 404);
+        }
+
+        if (!Storage::disk('local')->exists($reservation->authorization_letter_path)) {
+            return response()->json(['message' => 'The authorization letter file is missing.'], 404);
+        }
+
+        $extension = pathinfo($reservation->authorization_letter_path, PATHINFO_EXTENSION);
+
+        return Storage::disk('local')->download(
+            $reservation->authorization_letter_path,
+            "authorization-letter-reservation-{$reservation->id}.{$extension}"
+        );
+    }
+
     // ─── Cancel ───────────────────────────────────────────────────────────────
 
     public function cancel(Request $request, $id)
@@ -178,8 +221,10 @@ class ReservationController extends Controller
             return response()->json(['message' => 'Forbidden.'], 403);
         }
 
-        if ($reservation->status !== 'pending') {
-            return response()->json(['message' => 'Only pending reservations can be cancelled.'], 422);
+        // 'approved' covers a "reserve" request that's cleared admin review but
+        // hasn't been paid yet — the client can still back out at that point.
+        if (!in_array($reservation->status, ['pending', 'approved'], true)) {
+            return response()->json(['message' => 'Only pending or approved reservations can be cancelled.'], 422);
         }
 
         if ($reservation->payment && $reservation->payment->status === 'paid') {
@@ -230,6 +275,40 @@ class ReservationController extends Controller
             return response()->json(['message' => 'Only pending reservations can be approved.'], 422);
         }
 
+        // Safety net — this shouldn't happen since store() already requires the
+        // letter up front, but guards against older data or a bypassed client.
+        if ($reservation->facility->requires_authorization_letter && !$reservation->authorization_letter_path) {
+            return response()->json([
+                'message' => "{$reservation->facility->name} requires an authorization letter, but none was submitted with this reservation.",
+            ], 422);
+        }
+
+        // "Reserve" requests are approved *before* payment — this is what unlocks
+        // the client's terms/payment step (see PaymentController). "Book"
+        // reservations pay first and auto-confirm on payment (handleSuccess), so
+        // reaching this branch for a 'book' type only happens as a manual
+        // fallback for a stuck or missed payment webhook.
+        if ($reservation->type === 'reserve') {
+            $reservation->update([
+                'status'      => 'approved',
+                'reviewed_by' => $request->user()->id,
+                'reviewed_at' => now(),
+            ]);
+
+            NotificationService::notifyUser(
+                $reservation->user,
+                'reservation_approved',
+                'Reservation Approved — Proceed to Payment',
+                "Your reservation request for {$reservation->facility->name} on {$reservation->reservation_date->format('M d, Y')} has been approved. Please complete payment to confirm your slot.",
+                $reservation->id
+            );
+
+            return response()->json([
+                'message'     => 'Reservation approved. The client can now proceed to payment.',
+                'reservation' => $reservation->fresh()->load(['user', 'facility', 'payment']),
+            ]);
+        }
+
         if (!$reservation->payment || $reservation->payment->status !== 'paid') {
             return response()->json(['message' => 'Payment must be completed before this reservation can be approved.'], 422);
         }
@@ -261,8 +340,10 @@ class ReservationController extends Controller
 
         $reservation = Reservation::with(['user', 'facility', 'payment'])->findOrFail($id);
 
-        if ($reservation->status !== 'pending') {
-            return response()->json(['message' => 'Only pending reservations can be rejected.'], 422);
+        // 'approved' so an admin can still revoke a "reserve" approval before
+        // the client has paid (e.g. the facility became unavailable meanwhile).
+        if (!in_array($reservation->status, ['pending', 'approved'], true)) {
+            return response()->json(['message' => 'Only pending or approved reservations can be rejected.'], 422);
         }
 
         if ($reservation->payment && $reservation->payment->status === 'paid') {

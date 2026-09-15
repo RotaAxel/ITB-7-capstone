@@ -104,20 +104,20 @@ export default function Dashboard() {
         </CardHeader>
         <CardContent className="pt-0">
           {loadingFac ? (
-            <div className="flex gap-4 overflow-x-auto pb-2">{[...Array(4)].map((_, i) => <Skeleton key={i} className="h-32 w-48 flex-shrink-0" />)}</div>
+            <div className="flex gap-5 overflow-x-auto pb-2">{[...Array(4)].map((_, i) => <Skeleton key={i} className="h-56 w-64 flex-shrink-0" />)}</div>
           ) : available.length === 0 ? (
             <p className="text-center text-[#1C2833] text-sm py-6">No facilities available right now</p>
           ) : (
-            <div className="flex gap-4 overflow-x-auto pb-2">
+            <div className="flex gap-5 overflow-x-auto pb-2">
               {available.map(f => (
-                <div key={f.id} className="flex-shrink-0 w-48 border border-[#E5E7E9] rounded-lg overflow-hidden hover:shadow-md transition-shadow">
-                  <div className="h-24 overflow-hidden">
+                <div key={f.id} className="flex-shrink-0 w-64 border border-[#E5E7E9] rounded-xl overflow-hidden hover:shadow-lg transition-shadow bg-white">
+                  <div className="h-36 overflow-hidden">
                     <FacilityThumb facility={f} />
                   </div>
-                  <div className="p-2.5">
-                    <p className="font-medium text-xs text-[#1C2833] truncate">{f.name}</p>
-                    <p className="text-[10px] text-[#1C2833] mt-0.5">₱{Number(f.price_per_hour).toLocaleString()}/hr</p>
-                    <Button size="sm" className="w-full mt-2 !text-[10px] !py-1" onClick={() => openModal(f.id)}>Reserve</Button>
+                  <div className="p-4">
+                    <p className="font-semibold text-base text-[#1C2833] truncate">{f.name}</p>
+                    <p className="text-sm text-[#1C2833] mt-1">₱{Number(f.price_per_hour).toLocaleString()}/hr</p>
+                    <Button size="lg" className="w-full mt-3 !text-base !py-3 font-bold" onClick={() => openModal(f.id)}>Reserve</Button>
                   </div>
                 </div>
               ))}

@@ -11,7 +11,7 @@ import {
   XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
 } from 'recharts'
 import {
-  Download, FileText, ChevronLeft, ChevronRight,
+  Download, FileText, FileBarChart, ChevronLeft, ChevronRight,
   TrendingUp, ClipboardList, Banknote, CheckCircle2, Building2, Users, CalendarRange,
 } from 'lucide-react'
 import api from '@/api/axios'
@@ -85,6 +85,7 @@ export default function AdminAnalytics() {
   })
   const [page, setPage] = useState(1)
   const [downloadingPdf, setDownloadingPdf] = useState(false)
+  const [downloadingFinancial, setDownloadingFinancial] = useState(false)
 
   const { data: summary } = useQuery({
     queryKey: ['admin', 'analytics', 'summary'],
@@ -188,6 +189,26 @@ export default function AdminAnalytics() {
       })
       .catch(() => toast.error('Failed to download report.'))
       .finally(() => setDownloadingPdf(false))
+  }
+
+  const downloadFinancialReport = () => {
+    const params = {}
+    if (filters.date_from)   params.date_from   = filters.date_from
+    if (filters.date_to)     params.date_to     = filters.date_to
+    if (filters.facility_id) params.facility_id = filters.facility_id
+    const query = new URLSearchParams(params).toString()
+    setDownloadingFinancial(true)
+    api.get(`/admin/reports/financial?${query}`, { responseType: 'blob', timeout: 60_000 })
+      .then(res => {
+        const url = URL.createObjectURL(new Blob([res.data], { type: 'application/pdf' }))
+        const a   = document.createElement('a')
+        a.href     = url
+        a.download = `cabs-financial-report-${format(new Date(), 'yyyyMMdd')}.pdf`
+        a.click()
+        URL.revokeObjectURL(url)
+      })
+      .catch(() => toast.error('Failed to download financial report.'))
+      .finally(() => setDownloadingFinancial(false))
   }
 
   const rows     = reports?.data         ?? []
@@ -364,15 +385,26 @@ export default function AdminAnalytics() {
               <p className="text-xs text-[#1C2833]">{total} records match current filters</p>
             </div>
           </div>
-          <Button
-            variant="outline"
-            size="sm"
-            loading={downloadingPdf}
-            onClick={downloadPdf}
-            className="flex items-center gap-2 self-start sm:self-auto bg-white text-[#C0392B] border-[#C0392B] rounded-full hover:bg-[#C0392B] hover:text-white transition-colors duration-200"
-          >
-            {!downloadingPdf && <Download className="h-4 w-4" />} {downloadingPdf ? 'Generating…' : 'Export PDF'}
-          </Button>
+          <div className="flex items-center gap-2 self-start sm:self-auto">
+            <Button
+              variant="outline"
+              size="sm"
+              loading={downloadingFinancial}
+              onClick={downloadFinancialReport}
+              className="flex items-center gap-2 bg-white text-[#C0392B] border-[#C0392B] rounded-full hover:bg-[#C0392B] hover:text-white transition-colors duration-200"
+            >
+              {!downloadingFinancial && <FileBarChart className="h-4 w-4" />} {downloadingFinancial ? 'Generating…' : 'Financial Report'}
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              loading={downloadingPdf}
+              onClick={downloadPdf}
+              className="flex items-center gap-2 bg-white text-[#C0392B] border-[#C0392B] rounded-full hover:bg-[#C0392B] hover:text-white transition-colors duration-200"
+            >
+              {!downloadingPdf && <Download className="h-4 w-4" />} {downloadingPdf ? 'Generating…' : 'Export PDF'}
+            </Button>
+          </div>
         </div>
 
         {/* Filters — plain white, no tinted container; the period switcher reads as
