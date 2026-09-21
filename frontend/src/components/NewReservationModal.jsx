@@ -71,6 +71,8 @@ export default function NewReservationModal({ onClose, preselectedFacility = '' 
   const [createdId,   setCreatedId]   = useState(null)
   const [showReceipt, setShowReceipt] = useState(false)
 
+  const today = new Date().toISOString().split('T')[0]
+
   const { data: facilities = [], isLoading: loadingFacilities } = useQuery({
     queryKey: ['facilities'],
     queryFn: () => api.get('/facilities').then(r => r.data),
@@ -128,12 +130,15 @@ export default function NewReservationModal({ onClose, preselectedFacility = '' 
     const errs = {}
     if (!form.facility_id)      errs.facility_id      = 'Please select a facility.'
     if (!form.reservation_date) errs.reservation_date = 'Please select a date.'
+    else if (form.reservation_date < today) errs.reservation_date = 'Reservation date cannot be in the past.'
     if (!form.start_time)       errs.start_time       = 'Please enter a start time.'
     if (!form.end_time)         errs.end_time         = 'Please enter an end time.'
     if (form.start_time && form.end_time && form.start_time >= form.end_time)
       errs.end_time = 'End time must be after start time.'
     if (hasConflict())
       errs.start_time = 'This time slot conflicts with an existing booking.'
+    if (facilityDetail?.requires_authorization_letter && !letterFile)
+      errs.authorization_letter = `${facilityDetail.name} requires an authorization letter to be attached.`
     setErrors(errs)
     return Object.keys(errs).length === 0
   }
@@ -145,8 +150,6 @@ export default function NewReservationModal({ onClose, preselectedFacility = '' 
     if (!form.number_of_participants || n < 1) errs.number_of_participants = 'Participants must be at least 1.'
     if (facilityDetail?.capacity && n > facilityDetail.capacity)
       errs.number_of_participants = `Exceeds facility capacity of ${facilityDetail.capacity}.`
-    if (facilityDetail?.requires_authorization_letter && !letterFile)
-      errs.authorization_letter = `${facilityDetail.name} requires an authorization letter to be attached.`
     setErrors(errs)
     return Object.keys(errs).length === 0
   }
@@ -198,7 +201,6 @@ export default function NewReservationModal({ onClose, preselectedFacility = '' 
     })
   }
 
-  const today          = new Date().toISOString().split('T')[0]
   const activeFacility = facilityDetail
 
   const durationHours = form.start_time && form.end_time
@@ -356,6 +358,43 @@ export default function NewReservationModal({ onClose, preselectedFacility = '' 
               )
             )}
 
+            {facilityDetail?.requires_authorization_letter && (
+              <div>
+                <Label>Authorization Letter *</Label>
+                <p className="text-xs text-[#1C2833] mt-0.5 mb-1.5">
+                  {facilityDetail.name} requires a signed authorization letter (PDF or image) to be attached to this request.
+                </p>
+                {letterFile ? (
+                  <div className="flex items-center justify-between gap-2 p-2.5 rounded-lg border border-[#A9DFBF] bg-[#EAFAF1]">
+                    <span className="flex items-center gap-2 min-w-0 text-sm text-[#1E8449]">
+                      <FileCheck className="h-4 w-4 shrink-0" />
+                      <span className="truncate">{letterFile.name}</span>
+                    </span>
+                    <button type="button" onClick={() => setLetterFile(null)} className="p-1 rounded text-[#1E8449] hover:bg-[#D5F5E3] shrink-0">
+                      <X className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                ) : (
+                  <label className={`flex flex-col items-center justify-center gap-1.5 py-5 rounded-lg border-2 border-dashed cursor-pointer transition-colors ${
+                    errors.authorization_letter ? 'border-[#C0392B] bg-[#FADBD8]/10' : 'border-[#E5E7E9] hover:bg-gray-50'
+                  }`}>
+                    <Upload className="h-5 w-5 text-[#1C2833]" />
+                    <span className="text-sm text-[#1C2833]">Click to upload — PDF, JPG, or PNG (max 5MB)</span>
+                    <input
+                      type="file"
+                      accept=".pdf,.jpg,.jpeg,.png"
+                      className="hidden"
+                      onChange={e => {
+                        const file = e.target.files[0]
+                        if (file) { setLetterFile(file); setErrors(er => ({ ...er, authorization_letter: '' })) }
+                      }}
+                    />
+                  </label>
+                )}
+                {errors.authorization_letter && <p className="text-red-500 text-xs mt-1">{errors.authorization_letter}</p>}
+              </div>
+            )}
+
             <div>
               <Label>Date *</Label>
               <Input type="date" min={today} value={form.reservation_date}
@@ -429,49 +468,21 @@ export default function NewReservationModal({ onClose, preselectedFacility = '' 
                   <span className="text-[#1C2833] font-normal ml-1">(max {facilityDetail.capacity})</span>
                 )}
               </Label>
-              <Input type="number" min={1} max={facilityDetail?.capacity}
+              <select
                 value={form.number_of_participants}
                 onChange={e => setField('number_of_participants', e.target.value)}
-                error={!!errors.number_of_participants} className="mt-1" placeholder="e.g. 10" />
+                disabled={!facilityDetail?.capacity}
+                className={`mt-1 block w-full rounded-lg border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#FADBD8] focus:border-[#C0392B] bg-white disabled:bg-gray-50 disabled:cursor-not-allowed ${
+                  errors.number_of_participants ? 'border-[#C0392B]' : 'border-[#E5E7E9]'
+                }`}
+              >
+                <option value="">{facilityDetail?.capacity ? '— Select —' : 'Loading capacity…'}</option>
+                {facilityDetail?.capacity && Array.from({ length: facilityDetail.capacity }, (_, i) => i + 1).map(n => (
+                  <option key={n} value={n}>{n}</option>
+                ))}
+              </select>
               {errors.number_of_participants && <p className="text-red-500 text-xs mt-1">{errors.number_of_participants}</p>}
             </div>
-
-            {facilityDetail?.requires_authorization_letter && (
-              <div>
-                <Label>Authorization Letter *</Label>
-                <p className="text-xs text-[#1C2833] mt-0.5 mb-1.5">
-                  {facilityDetail.name} requires a signed authorization letter (PDF or image) to be attached to this request.
-                </p>
-                {letterFile ? (
-                  <div className="flex items-center justify-between gap-2 p-2.5 rounded-lg border border-[#A9DFBF] bg-[#EAFAF1]">
-                    <span className="flex items-center gap-2 min-w-0 text-sm text-[#1E8449]">
-                      <FileCheck className="h-4 w-4 shrink-0" />
-                      <span className="truncate">{letterFile.name}</span>
-                    </span>
-                    <button type="button" onClick={() => setLetterFile(null)} className="p-1 rounded text-[#1E8449] hover:bg-[#D5F5E3] shrink-0">
-                      <X className="h-3.5 w-3.5" />
-                    </button>
-                  </div>
-                ) : (
-                  <label className={`flex flex-col items-center justify-center gap-1.5 py-5 rounded-lg border-2 border-dashed cursor-pointer transition-colors ${
-                    errors.authorization_letter ? 'border-[#C0392B] bg-[#FADBD8]/10' : 'border-[#E5E7E9] hover:bg-gray-50'
-                  }`}>
-                    <Upload className="h-5 w-5 text-[#1C2833]" />
-                    <span className="text-sm text-[#1C2833]">Click to upload — PDF, JPG, or PNG (max 5MB)</span>
-                    <input
-                      type="file"
-                      accept=".pdf,.jpg,.jpeg,.png"
-                      className="hidden"
-                      onChange={e => {
-                        const file = e.target.files[0]
-                        if (file) { setLetterFile(file); setErrors(er => ({ ...er, authorization_letter: '' })) }
-                      }}
-                    />
-                  </label>
-                )}
-                {errors.authorization_letter && <p className="text-red-500 text-xs mt-1">{errors.authorization_letter}</p>}
-              </div>
-            )}
 
             {facilityDetail?.amenities?.filter(a => a.is_available).length > 0 && (
               <div>

@@ -91,6 +91,36 @@ class HistoricalDataSeeder extends Seeder
 
         $receiptCounter = 10001;
 
+        // Tracks every "upcoming" (pending/approved) slot booked so far in this run,
+        // keyed by facility_id, so Reservation 3 below can be shifted to a free date
+        // instead of silently double-booking a facility. The date/timeslot formula
+        // used to be purely a function of ($i % 180) and ($i % 15), which repeats
+        // every 60 clients — with 1000+ seeded clients that produced dozens of
+        // reservations for the same facility on the exact same date and time
+        // (a real conflict the live booking flow would never allow; only possible
+        // here because this seeder writes rows directly via DB::table(), bypassing
+        // ReservationController::store()'s conflict check).
+        $bookedSlots = [];
+
+        // Also seed from whatever's already pending/approved/confirmed in the DB, so
+        // re-running this seeder against a partially-seeded database can't collide
+        // with rows a previous run already committed.
+        DB::table('reservations')
+            ->whereIn('status', ['pending', 'approved', 'confirmed'])
+            ->get(['facility_id', 'reservation_date', 'start_time', 'end_time'])
+            ->each(function ($r) use (&$bookedSlots) {
+                $bookedSlots[$r->facility_id][] = [(string) $r->reservation_date, $r->start_time, $r->end_time];
+            });
+
+        $slotConflicts = function (int $facilityId, string $date, string $start, string $end) use (&$bookedSlots) {
+            foreach ($bookedSlots[$facilityId] ?? [] as [$bDate, $bStart, $bEnd]) {
+                if ($bDate === $date && $start < $bEnd && $end > $bStart) {
+                    return true;
+                }
+            }
+            return false;
+        };
+
         foreach ($clients as $i => $client) {
             // Cycle through the 15 template variations regardless of how many
             // clients there are; date offsets below stay keyed on the raw $i
@@ -201,6 +231,21 @@ class HistoricalDataSeeder extends Seeder
             $futureDays  = 5 + (($i * 3) % 180);
             $date3       = Carbon::now()->addDays($futureDays)->toDateString();
             [$s3, $e3]   = $timeSlots[($idx + 10) % 15];
+
+            // This is an "upcoming" reservation — i.e. it actually holds the facility
+            // — so, unlike Reservations 1 and 2 above (historical/cancelled, which
+            // don't block anything), it must not collide with another active booking.
+            // Push the date forward a day at a time until it lands on a free slot.
+            $shiftGuard = 0;
+            while ($slotConflicts($fac3->id, $date3, $s3, $e3)) {
+                $futureDays++;
+                $date3 = Carbon::now()->addDays($futureDays)->toDateString();
+                if (++$shiftGuard > 2000) {
+                    throw new \RuntimeException("HistoricalDataSeeder: couldn't find a free slot for facility {$fac3->id}.");
+                }
+            }
+            $bookedSlots[$fac3->id][] = [$date3, $s3, $e3];
+
             $hours3      = abs(Carbon::createFromTimeString($e3)->diffInHours(Carbon::createFromTimeString($s3)));
             $amount3     = $hours3 * $fac3->price_per_hour;
             $status3     = $idx < 10 ? 'pending' : 'approved';

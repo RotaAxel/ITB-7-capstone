@@ -43,7 +43,15 @@ Route::middleware('auth:sanctum')->group(function () {
 
     // Reservations
     Route::get('/reservations',                               [ReservationController::class, 'index']);
-    Route::post('/reservations',                              [ReservationController::class, 'store']);
+    // Reserving/booking a facility is a client action — staff/admin "handle"
+    // reservations (approve/reject/complete/cancel below), they don't create
+    // their own. Kept as the one client-only exception in this shared group
+    // rather than splitting the whole group, since everything else here
+    // (viewing, cancelling, acknowledging terms, downloading a letter) is
+    // already ownership-checked in the controller and legitimately shared
+    // with staff/admin (e.g. AdminReservations lets staff cancel on a client's
+    // behalf via this same /cancel route).
+    Route::post('/reservations', [ReservationController::class, 'store'])->middleware('role:client');
     Route::get('/reservations/{id}',                          [ReservationController::class, 'show']);
     Route::delete('/reservations/{id}',                       [ReservationController::class, 'destroy']);
     Route::post('/reservations/{id}/cancel',                  [ReservationController::class, 'cancel']);

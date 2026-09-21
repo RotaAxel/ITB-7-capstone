@@ -17,16 +17,39 @@ class AuthController extends Controller
     // must request a new one.
     private const VERIFICATION_CODE_TTL_MINUTES = 15;
 
+    // Letters (incl. accented), spaces, and the handful of punctuation marks real
+    // names use (O'Brien, dela Cruz, St. James) — no digits or other symbols.
+    // Mirrors the frontend's NAME_REGEX in Register.jsx; kept here too since the
+    // frontend check alone is trivially bypassable via a direct API call.
+    private const NAME_REGEX = '/^[\pL\s\'.\-]+$/u';
+
+    // A PH mobile number in "+63" + 10-digit local-part form (e.g. +639171234567).
+    // The frontend only ever sends this shape (fixed "+63" prefix in the UI), but
+    // validate the full pattern server-side rather than trusting that.
+    private const PH_MOBILE_REGEX = '/^\+639\d{9}$/';
+
+    /**
+     * Same complexity bar everywhere a user sets their own password (register,
+     * reset, change): 8+ characters, upper + lower case, a number, a symbol.
+     */
+    private function strongPassword(): PasswordRule
+    {
+        return PasswordRule::min(8)->mixedCase()->numbers()->symbols();
+    }
+
     public function register(Request $request)
     {
         $validated = $request->validate([
-            'full_name'      => ['required', 'string', 'max:255'],
+            'full_name'      => ['required', 'string', 'max:255', 'regex:' . self::NAME_REGEX],
             'email'          => ['required', 'email', 'unique:users,email'],
-            'password'       => ['required', 'confirmed', PasswordRule::min(8)],
+            'password'       => ['required', 'confirmed', $this->strongPassword()],
             'age'            => ['nullable', 'integer', 'min:1', 'max:150'],
             'gender'         => ['nullable', 'in:male,female,other'],
             'address'        => ['nullable', 'string'],
-            'contact_number' => ['nullable', 'string', 'max:20'],
+            'contact_number' => ['nullable', 'regex:' . self::PH_MOBILE_REGEX],
+        ], [
+            'full_name.regex'      => 'Full name may only contain letters.',
+            'contact_number.regex' => 'Enter a valid PH mobile number.',
         ]);
 
         $user = User::create([
@@ -168,7 +191,7 @@ class AuthController extends Controller
         $validated = $request->validate([
             'token'                 => ['required', 'string'],
             'email'                 => ['required', 'email'],
-            'password'              => ['required', 'confirmed', PasswordRule::min(8)],
+            'password'              => ['required', 'confirmed', $this->strongPassword()],
         ]);
 
         $status = Password::reset(
@@ -217,7 +240,7 @@ class AuthController extends Controller
     {
         $request->validate([
             'current_password' => ['required'],
-            'password'         => ['required', 'min:8', 'confirmed'],
+            'password'         => ['required', 'confirmed', $this->strongPassword()],
         ]);
 
         $user = $request->user();

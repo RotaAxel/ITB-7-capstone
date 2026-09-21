@@ -10,6 +10,7 @@ import Badge from '@/components/ui/Badge'
 import Button from '@/components/ui/Button'
 import Spinner from '@/components/ui/Spinner'
 import NewReservationModal from '@/components/NewReservationModal'
+import { useAuth } from '@/hooks/useAuth'
 
 /* ── Sport theme helper ─────────────────────────────────────────────────── */
 function getSportTheme(name = '') {
@@ -75,6 +76,7 @@ function FacilityHero({ facility, onBack }) {
 export default function FacilityDetail() {
   const { id } = useParams()
   const navigate = useNavigate()
+  const { isClient } = useAuth()
   const [showModal, setShowModal] = useState(false)
 
   const { data: facility, isLoading, error } = useQuery({
@@ -134,7 +136,14 @@ export default function FacilityDetail() {
                 <p className="text-sm text-gray-600 leading-relaxed">{facility.description}</p>
               )}
 
-              {facility.status === 'available' ? (
+              {!isClient ? (
+                // Staff/admin land here from their own facility management pages
+                // (to view details) — reserving is a client action, not something
+                // staff "handle" on their own behalf.
+                <p className="text-xs text-[#1C2833] bg-gray-50 border border-[#E5E7E9] rounded-lg px-3 py-2.5 text-center">
+                  Staff and admin accounts can't make reservations.
+                </p>
+              ) : facility.status === 'available' ? (
                 <Button className="w-full" onClick={() => setShowModal(true)}>
                   Reserve This Facility
                 </Button>

@@ -13,14 +13,26 @@
         @page { margin: 1.5in; }
         body { font-family: 'DejaVu Sans', sans-serif; font-size: 11px; color: #1a1a1a; }
 
-        /* Header — just the org identity, matching the Reservation Report; Control
-           No./Generated/Printed By/Via moved down into the footer (.footer-meta). */
-        .header { border-bottom: 3px solid #C0392B; padding-bottom: 14px; margin-bottom: 18px; text-align: center; }
-        .header img.logo { height: 56px; }
-        .header h1 { font-size: 36px; font-weight: 900; color: #C0392B; letter-spacing: 4px; line-height: 1; margin-top: 4px; }
-        .header .org-name    { font-size: 12px; font-weight: 700; color: #1a1a1a; margin-top: 4px; }
-        .header .org-address { font-size: 9.5px; color: #555; margin-top: 1px; }
-        .header .badge {
+        /* Header — a 3-column table matching the Reservation Report: empty left
+           spacer, org block centered, Control No. / Generated at the upper right.
+           Printed By / Printed Via stay in the footer (.footer-meta). */
+        .header { border-bottom: 3px solid #C0392B; padding-bottom: 14px; margin-bottom: 18px; }
+        table.header-table { width: 100%; border-collapse: collapse; }
+        table.header-table td { vertical-align: top; }
+
+        .header-spacer { width: 24%; }
+        .header-meta    { width: 24%; text-align: right; }
+        .header-meta .label {
+            text-transform: uppercase; letter-spacing: 0.4px; color: #96281B; font-weight: 700; font-size: 8px;
+        }
+        .header-meta .value { color: #1a1a1a; font-size: 10px; margin: 2px 0 8px; }
+
+        .header-org { width: 52%; text-align: center; }
+        .header-org img.logo { height: 56px; }
+        .header-org h1 { font-size: 36px; font-weight: 900; color: #C0392B; letter-spacing: 4px; line-height: 1; margin-top: 4px; }
+        .header-org .org-name    { font-size: 12px; font-weight: 700; color: #1a1a1a; margin-top: 4px; }
+        .header-org .org-address { font-size: 9.5px; color: #555; margin-top: 1px; }
+        .header-org .badge {
             display: inline-block; background: #C0392B; color: #fff; font-size: 10px; font-weight: 700;
             padding: 4px 14px; border-radius: 4px; letter-spacing: 1px; text-transform: uppercase; margin-top: 8px;
         }
@@ -55,16 +67,29 @@
 <body>
 <div class="page">
 
-    {{-- Header — just the org identity; document metadata lives in the footer. --}}
+    {{-- Header — org identity centered, Control No. / Generated at the upper right. --}}
     <div class="header">
-        @if($logoBase64)
-            <img src="{{ $logoBase64 }}" alt="CABS" class="logo">
-        @else
-            <h1>CABS</h1>
-        @endif
-        <div class="org-name">Cabuyao Athletes Basic School</div>
-        <div class="org-address">Cabuyao, Laguna, Philippines</div>
-        <div class="badge">Financial Report</div>
+        <table class="header-table">
+            <tr>
+                <td class="header-spacer"></td>
+                <td class="header-org">
+                    @if($logoBase64)
+                        <img src="{{ $logoBase64 }}" alt="CABS" class="logo">
+                    @else
+                        <h1>CABS</h1>
+                    @endif
+                    <div class="org-name">Cabuyao Athletes Basic School</div>
+                    <div class="org-address">Banaybanay, Cabuyao, Laguna, Philippines</div>
+                    <div class="badge">Financial Report</div>
+                </td>
+                <td class="header-meta">
+                    <div class="label">Control No.</div>
+                    <div class="value">{{ $controlNumber }}</div>
+                    <div class="label">Generated</div>
+                    <div class="value">{{ $generatedAt->format('F d, Y g:i A') }}</div>
+                </td>
+            </tr>
+        </table>
     </div>
 
     {{-- Filters applied --}}
@@ -198,8 +223,6 @@
         This is a summarized financial report and contains no individual client information.
         It is system-generated and reflects data at the time of generation.
         <div class="footer-meta">
-            <span>Control No. {{ $controlNumber }}</span>
-            <span>Generated {{ $generatedAt->format('M d, Y g:i A') }}</span>
             <span>Printed By {{ $printedBy }}</span>
             <span>Printed Via CABS System</span>
         </div>

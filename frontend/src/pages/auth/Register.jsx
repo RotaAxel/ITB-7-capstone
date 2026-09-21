@@ -7,17 +7,29 @@ import { useAuth } from '@/hooks/useAuth'
 import Input  from '@/components/ui/Input'
 import Label  from '@/components/ui/Label'
 import Alert  from '@/components/ui/Alert'
+import PasswordStrengthMeter from '@/components/ui/PasswordStrengthMeter'
 import { CheckCircle2, Eye, EyeOff, UserPlus } from 'lucide-react'
 
+// Letters (incl. accented), spaces, and the handful of punctuation marks real
+// names use (O'Brien, dela Cruz, St. James) — no digits or other symbols.
+const NAME_REGEX = /^[A-Za-zÀ-ÖØ-öø-ÿ\s'.-]+$/
+// PH mobile number, local part only — the "+63" prefix is fixed in the UI (see
+// below), so this only needs to match the 10 digits that follow it.
+const PH_MOBILE_REGEX = /^9\d{9}$/
+// At least one lowercase, one uppercase, one digit, one symbol, 8+ characters.
+const STRONG_PASSWORD_REGEX = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[^A-Za-z0-9]).{8,}$/
+
 const schema = z.object({
-  full_name:             z.string().min(2, 'Full name must be at least 2 characters'),
+  full_name:             z.string().min(2, 'Full name must be at least 2 characters')
+                            .regex(NAME_REGEX, 'Only letters are allowed'),
   email:                 z.string().email('Invalid email address'),
-  password:              z.string().min(8, 'Password must be at least 8 characters'),
+  password:              z.string().min(8, 'Password must be at least 8 characters')
+                            .regex(STRONG_PASSWORD_REGEX, 'Password must include an uppercase letter, a lowercase letter, a number, and a special character'),
   password_confirmation: z.string(),
   age:                   z.coerce.number().int().min(5).max(150).optional().or(z.literal('')),
   gender:                z.enum(['male', 'female', 'other']).optional().or(z.literal('')),
   address:               z.string().optional(),
-  contact_number:        z.string().max(20).optional(),
+  contact_number:        z.string().regex(PH_MOBILE_REGEX, 'Enter a valid 10-digit mobile number').optional().or(z.literal('')),
 }).refine(d => d.password === d.password_confirmation, {
   path: ['password_confirmation'],
   message: 'Passwords do not match',
@@ -34,15 +46,22 @@ export default function Register() {
   const {
     register,
     handleSubmit,
+    setValue,
+    watch,
     formState: { errors, isSubmitting },
   } = useForm({ resolver: zodResolver(schema) })
+
+  const passwordValue = watch('password')
 
   const onSubmit = async (data) => {
     setApiError('')
     const payload = {
       ...data,
-      age:    data.age    || undefined,
-      gender: data.gender || undefined,
+      age:            data.age    || undefined,
+      gender:         data.gender || undefined,
+      // The "+63" prefix is a fixed UI element, not something the user types —
+      // stitch it back on here so the backend gets the full E.164-ish number.
+      contact_number: data.contact_number ? `+63${data.contact_number}` : undefined,
     }
     const result = await authRegister(payload)
 
@@ -135,7 +154,15 @@ export default function Register() {
 
               <div>
                 <Label htmlFor="full_name" required>Full name</Label>
-                <Input id="full_name" placeholder="Juan dela Cruz" error={!!errors.full_name} className={inputFocus} {...register('full_name')} />
+                <Input
+                  id="full_name"
+                  placeholder="Juan dela Cruz"
+                  error={!!errors.full_name}
+                  className={inputFocus}
+                  {...register('full_name')}
+                  value={watch('full_name') ?? ''}
+                  onChange={e => setValue('full_name', e.target.value.replace(/[^A-Za-zÀ-ÖØ-öø-ÿ\s'.-]/g, ''), { shouldValidate: true })}
+                />
                 {errors.full_name && <p className={errText}>{errors.full_name.message}</p>}
               </div>
 
@@ -153,7 +180,7 @@ export default function Register() {
                       id="password"
                       type={showPass ? 'text' : 'password'}
                       autoComplete="new-password"
-                      placeholder="Min 8 characters"
+                      placeholder="Min 8 chars, mixed case"
                       error={!!errors.password}
                       className={`pr-10 ${inputFocus}`}
                       {...register('password')}
@@ -163,7 +190,9 @@ export default function Register() {
                       {showPass ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                     </button>
                   </div>
-                  {errors.password && <p className={errText}>{errors.password.message}</p>}
+                  {errors.password
+                    ? <p className={errText}>{errors.password.message}</p>
+                    : <PasswordStrengthMeter password={passwordValue} />}
                 </div>
                 <div>
                   <Label htmlFor="password_confirmation" required>Confirm</Label>
@@ -208,8 +237,24 @@ export default function Register() {
               </div>
 
               <div>
-                <Label htmlFor="contact_number">Contact number</Label>
-                <Input id="contact_number" type="tel" placeholder="09XX XXX XXXX" error={!!errors.contact_number} className={inputFocus} {...register('contact_number')} />
+                <Label htmlFor="contact_number">Contact number <span className="text-[#1C2833] font-normal">(Optional)</span></Label>
+                <div className="mt-1 flex">
+                  <span className="inline-flex items-center px-3 rounded-l-lg border border-r-0 border-[#FADBD8] bg-gray-50 text-sm text-[#1C2833] font-medium select-none">
+                    +63
+                  </span>
+                  <Input
+                    id="contact_number"
+                    type="tel"
+                    inputMode="numeric"
+                    maxLength={10}
+                    placeholder="9XXXXXXXXX"
+                    error={!!errors.contact_number}
+                    className={`rounded-l-none ${inputFocus}`}
+                    {...register('contact_number')}
+                    value={watch('contact_number') ?? ''}
+                    onChange={e => setValue('contact_number', e.target.value.replace(/\D/g, '').slice(0, 10), { shouldValidate: true })}
+                  />
+                </div>
                 {errors.contact_number && <p className={errText}>{errors.contact_number.message}</p>}
               </div>
 

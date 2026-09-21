@@ -1,8 +1,8 @@
-import { useMemo, useState } from 'react'
+import { useMemo, useState, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
-import { Plus, Pencil, Wrench, Trash2, MapPin, Users, Building2, CheckCircle2, AlertTriangle, Ban, ChevronLeft, ChevronRight, FileCheck } from 'lucide-react'
+import { Plus, Pencil, Wrench, Trash2, MapPin, Users, Upload, X, Building2, CheckCircle2, AlertTriangle, Ban, ChevronLeft, ChevronRight, FileCheck } from 'lucide-react'
 import api from '@/api/axios'
 import { Card, CardContent } from '@/components/ui/Card'
 import Badge from '@/components/ui/Badge'
@@ -119,6 +119,62 @@ function FacilityRow({ facility, onEdit, onMaint, onDelete }) {
   )
 }
 
+/* ── Image Upload Field ──────────────────────────────────────────────────── */
+function ImageUploadField({ preview, onFileChange, onClear }) {
+  const inputRef = useRef(null)
+
+  const handleDrop = e => {
+    e.preventDefault()
+    const file = e.dataTransfer.files[0]
+    if (file && file.type.startsWith('image/')) onFileChange(file)
+  }
+
+  return (
+    <div>
+      <Label>Facility Photo</Label>
+      <div className="mt-1 relative">
+        {preview ? (
+          <div className="relative rounded-lg overflow-hidden border border-[#E5E7E9] h-48">
+            <img src={preview} alt="Preview" className="w-full h-full object-cover" />
+            <button
+              type="button"
+              onClick={onClear}
+              className="absolute top-2 right-2 bg-black/60 hover:bg-black/80 text-white rounded-full p-1 transition-colors"
+            >
+              <X className="h-4 w-4" />
+            </button>
+            <div className="absolute bottom-0 inset-x-0 bg-black/40 text-white text-xs text-center py-1">
+              Click × to remove or drop a new photo
+            </div>
+          </div>
+        ) : (
+          <div
+            onClick={() => inputRef.current?.click()}
+            onDrop={handleDrop}
+            onDragOver={e => e.preventDefault()}
+            className="flex flex-col items-center justify-center h-48 rounded-lg border-2 border-dashed border-[#E5E7E9] hover:border-[#C0392B] hover:bg-[#FADBD8]/10 cursor-pointer transition-colors"
+          >
+            <Upload className="h-8 w-8 text-[#1C2833] mb-2" />
+            <p className="text-sm font-medium text-[#1C2833]">Click to upload or drag & drop</p>
+            <p className="text-xs text-[#1C2833] mt-0.5">PNG, JPG, WEBP — max 2 MB</p>
+          </div>
+        )}
+        <input
+          ref={inputRef}
+          type="file"
+          accept="image/*"
+          className="hidden"
+          onChange={e => {
+            const file = e.target.files[0]
+            if (file) onFileChange(file)
+            e.target.value = ''
+          }}
+        />
+      </div>
+    </div>
+  )
+}
+
 const PAGE_SIZE = 9
 
 /* ── Main page ───────────────────────────────────────────────────────────── */
@@ -132,8 +188,10 @@ export default function AdminFacilities() {
   const [maintenanceModal, setMaintenanceModal] = useState(null)
   const [deleteConfirm, setDeleteConfirm] = useState(null)
 
-  const [form,  setForm]  = useState(BLANK_FACILITY)
-  const [maint, setMaint] = useState(BLANK_MAINTENANCE)
+  const [form,         setForm]         = useState(BLANK_FACILITY)
+  const [maint,        setMaint]        = useState(BLANK_MAINTENANCE)
+  const [imageFile,    setImageFile]    = useState(null)   // File | null
+  const [imagePreview, setImagePreview] = useState(null)   // string | null
 
   const { data: facilities = [], isLoading } = useQuery({
     queryKey: ['facilities'],
@@ -167,6 +225,7 @@ export default function AdminFacilities() {
     fd.append('price_per_hour', form.price_per_hour)
     fd.append('status',         form.status)
     fd.append('requires_authorization_letter', form.requires_authorization_letter ? 'true' : 'false')
+    if (imageFile) fd.append('image', imageFile)
     return fd
   }
 
@@ -217,13 +276,23 @@ export default function AdminFacilities() {
   const setF = (k, v) => setForm(f  => ({ ...f,  [k]: v }))
   const setM = (k, v) => setMaint(m => ({ ...m, [k]: v }))
 
+  const resetImage = () => { setImageFile(null); setImagePreview(null) }
+
+  const handleFileChange = file => {
+    setImageFile(file)
+    setImagePreview(URL.createObjectURL(file))
+  }
+
   const openCreate = () => {
     setForm(BLANK_FACILITY)
+    resetImage()
     setFacilityModal('create')
   }
 
   const openEdit = f => {
     setForm({ ...f })
+    setImageFile(null)
+    setImagePreview(f.image_url || null)
     setFacilityModal(f)
   }
 
@@ -441,6 +510,17 @@ export default function AdminFacilities() {
           }
         >
           <div className="space-y-4">
+            <ImageUploadField
+              preview={imagePreview}
+              onFileChange={handleFileChange}
+              onClear={() => {
+                resetImage()
+                // If editing and the facility had an existing image, clearing only removes
+                // the local preview; the server image is only replaced when a new file is
+                // uploaded (there's no dedicated "remove image" endpoint).
+              }}
+            />
+
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div className="sm:col-span-2">
                 <Label>Name *</Label>

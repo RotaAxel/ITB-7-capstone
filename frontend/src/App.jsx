@@ -101,20 +101,26 @@ export default function App() {
               <Route element={<ProtectedRoute />}>
                 <Route element={<AppLayout />}>
 
-                  {/* Client */}
-                  <Route path="dashboard"                element={<Dashboard />} />
-                  <Route path="facilities"               element={<FacilityList />} />
+                  {/* Shared by every role */}
                   <Route path="facilities/:id"           element={<FacilityDetail />} />
-                  <Route path="reservations"             element={<MyReservations />} />
-                  <Route path="reservations/new"         element={<NewReservation />} />
-                  <Route path="reservations/:id"         element={<ReservationDetail />} />
-                  <Route path="reservations/:id/terms"   element={<TermsPage />} />
-                  <Route path="reservations/:id/payment" element={<PaymentPage />} />
-                  <Route path="reservations/:id/receipt" element={<ReceiptPage />} />
                   <Route path="payment/callback"         element={<PaymentCallback />} />
-                  <Route path="calendar"                 element={<CalendarPage />} />
                   <Route path="profile"                  element={<ProfilePage />} />
                   <Route path="notifications"            element={<NotificationsPage />} />
+
+                  {/* Client only — staff/admin "handle" reservations via their own
+                      /staff or /admin routes below, they don't book for themselves
+                      through this consumer flow. */}
+                  <Route element={<ProtectedRoute roles={['client']} />}>
+                    <Route path="dashboard"                element={<Dashboard />} />
+                    <Route path="facilities"               element={<FacilityList />} />
+                    <Route path="reservations"             element={<MyReservations />} />
+                    <Route path="reservations/new"         element={<NewReservation />} />
+                    <Route path="reservations/:id"         element={<ReservationDetail />} />
+                    <Route path="reservations/:id/terms"   element={<TermsPage />} />
+                    <Route path="reservations/:id/payment" element={<PaymentPage />} />
+                    <Route path="reservations/:id/receipt" element={<ReceiptPage />} />
+                    <Route path="calendar"                 element={<CalendarPage />} />
+                  </Route>
 
                   {/* Staff + Admin */}
                   <Route element={<ProtectedRoute roles={['staff', 'administrator']} />}>

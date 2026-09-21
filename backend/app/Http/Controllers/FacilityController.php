@@ -88,7 +88,14 @@ class FacilityController extends Controller
             'capacity'      => ['required', 'integer', 'min:1'],
             'price_per_hour'=> ['required', 'numeric', 'min:0'],
             'status'        => ['in:available,under_maintenance,unavailable'],
-            'requires_authorization_letter' => ['sometimes', 'boolean'],
+            // Not "boolean" — this form posts as multipart/form-data, where a checkbox
+            // arrives as the literal string "true"/"false", and Laravel's "boolean"
+            // rule only accepts true/false/1/0/'1'/'0' (NOT the strings "true"/"false"),
+            // so every submission with this field present — i.e. every submission,
+            // since it's always sent — was rejected with a 422. $request->boolean()
+            // below already normalizes any of these forms correctly, so this field
+            // just needs to be present, not strictly typed.
+            'requires_authorization_letter' => ['sometimes'],
             // Laravel's 'image' rule doesn't accept SVG in this version even though
             // it's a perfectly valid image (fileinfo correctly detects it as
             // image/svg+xml) — use an explicit mimes list instead so SVG uploads
@@ -126,7 +133,8 @@ class FacilityController extends Controller
             'capacity'      => ['sometimes', 'integer', 'min:1'],
             'price_per_hour'=> ['sometimes', 'numeric', 'min:0'],
             'status'        => ['sometimes', 'in:available,under_maintenance,unavailable'],
-            'requires_authorization_letter' => ['sometimes', 'boolean'],
+            // See the comment on this same rule in store() above — not "boolean".
+            'requires_authorization_letter' => ['sometimes'],
             // Laravel's 'image' rule doesn't accept SVG in this version even though
             // it's a perfectly valid image (fileinfo correctly detects it as
             // image/svg+xml) — use an explicit mimes list instead so SVG uploads

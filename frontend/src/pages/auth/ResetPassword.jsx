@@ -8,9 +8,14 @@ import api from '@/api/axios'
 import Input from '@/components/ui/Input'
 import Label from '@/components/ui/Label'
 import Alert from '@/components/ui/Alert'
+import PasswordStrengthMeter from '@/components/ui/PasswordStrengthMeter'
+
+// At least one lowercase, one uppercase, one digit, one symbol, 8+ characters.
+const STRONG_PASSWORD_REGEX = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[^A-Za-z0-9]).{8,}$/
 
 const schema = z.object({
-  password:              z.string().min(8, 'Password must be at least 8 characters'),
+  password:              z.string().min(8, 'Password must be at least 8 characters')
+                            .regex(STRONG_PASSWORD_REGEX, 'Password must include an uppercase letter, a lowercase letter, a number, and a special character'),
   password_confirmation: z.string(),
 }).refine(d => d.password === d.password_confirmation, {
   path: ['password_confirmation'],
@@ -32,8 +37,11 @@ export default function ResetPassword() {
   const {
     register,
     handleSubmit,
+    watch,
     formState: { errors, isSubmitting },
   } = useForm({ resolver: zodResolver(schema) })
+
+  const passwordValue = watch('password')
 
   const onSubmit = async (data) => {
     setApiError('')
@@ -99,7 +107,7 @@ export default function ResetPassword() {
                       id="password"
                       type={showPass ? 'text' : 'password'}
                       autoComplete="new-password"
-                      placeholder="Min 8 characters"
+                      placeholder="Min 8 chars, mixed case"
                       error={!!errors.password}
                       className="pr-10 focus:border-[#C0392B] focus:ring-[#FADBD8]"
                       {...register('password')}
@@ -109,7 +117,9 @@ export default function ResetPassword() {
                       {showPass ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                     </button>
                   </div>
-                  {errors.password && <p className="mt-1 text-xs text-[#C0392B]">{errors.password.message}</p>}
+                  {errors.password
+                    ? <p className="mt-1 text-xs text-[#C0392B]">{errors.password.message}</p>
+                    : <PasswordStrengthMeter password={passwordValue} />}
                 </div>
 
                 <div>

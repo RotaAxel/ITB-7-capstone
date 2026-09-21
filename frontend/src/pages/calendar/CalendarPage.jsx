@@ -11,44 +11,43 @@ import api from '@/api/axios'
 import { Card, CardContent } from '@/components/ui/Card'
 import Button from '@/components/ui/Button'
 
-// Admin keeps the original distinct per-status colors (useful for triage: at a
-// glance, which requests are pending vs approved vs confirmed).
+// Admin: distinct per-status colors (useful for triage: at a glance, which
+// requests are pending vs approved vs confirmed vs cancelled/rejected). A date
+// with no reservation at all shows no color — "Available" is listed in the
+// legend for clarity but isn't a clickable filter (there's no event to filter).
 const ADMIN_STATUS_COLORS = {
-  pending:   '#F39C12',
+  pending:   '#F1C40F',
   approved:  '#2980B9',
   confirmed: '#27AE60',
   cancelled: '#717D7E',
   rejected:  '#C0392B',
 }
 const ADMIN_LEGEND = [
-  { label: 'Pending',   color: '#F39C12', desc: 'Awaiting approval' },
-  { label: 'Approved',  color: '#2980B9', desc: 'Approved, awaiting payment' },
-  { label: 'Confirmed', color: '#27AE60', desc: 'Paid and confirmed' },
-  { label: 'Cancelled', color: '#717D7E', desc: 'Cancelled' },
-  { label: 'Rejected',  color: '#C0392B', desc: 'Rejected' },
+  { label: 'Available',  color: null,      desc: 'No reservation',              statuses: [] },
+  { label: 'Pending',    color: '#F1C40F', desc: 'Awaiting approval',           statuses: ['pending'] },
+  { label: 'Approved',   color: '#2980B9', desc: 'Approved, awaiting payment',  statuses: ['approved'] },
+  { label: 'Confirmed',  color: '#27AE60', desc: 'Paid and confirmed',          statuses: ['confirmed'] },
+  { label: 'Cancelled',  color: '#717D7E', desc: 'Cancelled',                   statuses: ['cancelled'] },
+  { label: 'Rejected',   color: '#C0392B', desc: 'Rejected',                    statuses: ['rejected'] },
 ]
 
-// Client view: Approved/Confirmed (the resource is actually secured — payment made
-// or in progress) render red — occupied. Pending keeps its own color since it's only
-// a request, not yet approved. Cancelled/Rejected (never happened, or no longer
-// holds the slot) are gray.
+// Client view: simplified to what actually matters when picking a date to book —
+// Available (no color), a held/unavailable date (red — approved, confirmed, or
+// completed all mean the slot is taken), or Pending (yellow — a request is in,
+// but the slot isn't confirmed taken yet). Cancelled/rejected reservations don't
+// hold the date, so they render the same as "Available" (no color).
 const OCCUPIED_COLOR = '#C0392B'
-const FREE_COLOR      = '#717D7E'
-const PENDING_COLOR   = '#F39C12'
+const PENDING_COLOR  = '#F1C40F'
 const CLIENT_STATUS_COLORS = {
   pending:   PENDING_COLOR,
   approved:  OCCUPIED_COLOR,
   confirmed: OCCUPIED_COLOR,
   completed: OCCUPIED_COLOR,
-  cancelled: FREE_COLOR,
-  rejected:  FREE_COLOR,
 }
 const CLIENT_LEGEND = [
-  { label: 'Pending',   color: PENDING_COLOR,  desc: 'Awaiting approval' },
-  { label: 'Approved',  color: OCCUPIED_COLOR, desc: 'Approved, awaiting payment — slot held' },
-  { label: 'Confirmed', color: OCCUPIED_COLOR, desc: 'Paid and confirmed — slot held' },
-  { label: 'Cancelled', color: FREE_COLOR,     desc: 'Cancelled — slot free' },
-  { label: 'Rejected',  color: FREE_COLOR,     desc: 'Rejected — slot free' },
+  { label: 'Available',     color: null,           desc: 'Open to book',                     statuses: [] },
+  { label: 'Not Available', color: OCCUPIED_COLOR,  desc: 'Approved or confirmed — slot held', statuses: ['approved', 'confirmed', 'completed'] },
+  { label: 'Pending',       color: PENDING_COLOR,   desc: 'Awaiting approval',                 statuses: ['pending'] },
 ]
 
 // A date counts as "booked" (day cell tinted red) if it has at least one reservation
@@ -60,7 +59,21 @@ export default function CalendarPage({ adminView = false }) {
   const calRef = useRef()
   const [dateRange, setDateRange] = useState({ start: null, end: null })
   const [lastUpdated, setLastUpdated] = useState(new Date())
-  const [selectedStatus, setSelectedStatus] = useState('all')
+  // null = no filter (show everything); otherwise an array of status strings to
+  // match — a legend chip like "Not Available" can stand for several statuses
+  // at once (approved + confirmed + completed), not just one.
+  const [selectedStatuses, setSelectedStatuses] = useState(null)
+  // 'all' or a facility name — the Day/Week (timeGrid) views lay every facility's
+  // bookings out in the same shared time column, so with several facilities all
+  // getting reserved around the same hours, the view turns into a wall of
+  // same-colored slivers. Narrowing to one facility is the most effective
+  // declutter; see also the two-line eventContent below.
+  const [selectedFacility, setSelectedFacility] = useState('all')
+
+  const { data: facilities = [] } = useQuery({
+    queryKey: ['facilities'],
+    queryFn: () => api.get('/facilities').then(r => r.data),
+  })
 
   const { data: rawEvents = [], refetch, isFetching } = useQuery({
     queryKey: ['calendar', adminView ? 'admin' : 'client', dateRange],
@@ -79,12 +92,15 @@ export default function CalendarPage({ adminView = false }) {
   const LEGEND = adminView ? ADMIN_LEGEND : CLIENT_LEGEND
 
   const events = rawEvents
-    .filter(e => selectedStatus === 'all' || e.extendedProps?.status === selectedStatus)
+    .filter(e => !selectedStatuses || selectedStatuses.includes(e.extendedProps?.status))
+    .filter(e => selectedFacility === 'all' || e.extendedProps?.facilityName === selectedFacility)
     .map(e => {
       const status = e.extendedProps?.status
+      // Client view: cancelled/rejected reservations don't hold the date anymore,
+      // so they fall back to a neutral gray — never the red "not available" color.
       const color  = adminView
         ? (ADMIN_STATUS_COLORS[status] ?? '#717D7E')
-        : (CLIENT_STATUS_COLORS[status] ?? FREE_COLOR)
+        : (CLIENT_STATUS_COLORS[status] ?? '#B5B8BC')
       return { ...e, backgroundColor: color, borderColor: color, textColor: '#FFFFFF' }
     })
 
@@ -152,8 +168,18 @@ export default function CalendarPage({ adminView = false }) {
         </div>
         <div className="flex items-center gap-2 flex-wrap">
           <select
-            value={selectedStatus}
-            onChange={e => setSelectedStatus(e.target.value)}
+            value={selectedFacility}
+            onChange={e => setSelectedFacility(e.target.value)}
+            className="text-sm border border-[#E5E7E9] rounded-lg px-3 py-2 focus:outline-none focus:border-[#C0392B] bg-white text-[#1C2833]"
+          >
+            <option value="all">All Facilities</option>
+            {facilities.map(f => (
+              <option key={f.id} value={f.name}>{f.name}</option>
+            ))}
+          </select>
+          <select
+            value={selectedStatuses?.length === 1 ? selectedStatuses[0] : 'all'}
+            onChange={e => setSelectedStatuses(e.target.value === 'all' ? null : [e.target.value])}
             className="text-sm border border-[#E5E7E9] rounded-lg px-3 py-2 focus:outline-none focus:border-[#C0392B] bg-white text-[#1C2833]"
           >
             <option value="all">All Statuses</option>
@@ -170,27 +196,46 @@ export default function CalendarPage({ adminView = false }) {
         </div>
       </div>
 
-      {/* Legend */}
+      {/* Legend — "Available" (no color) is informational only, not a filter:
+          there's no event to filter to when nothing's booked. Every other chip
+          toggles the calendar to just that status (or set of statuses). */}
       <div className="flex flex-wrap gap-2">
-        {LEGEND.map(l => (
+        {LEGEND.map(l => {
+          const clickable = l.statuses.length > 0
+          const isActive  = clickable
+            && selectedStatuses?.length === l.statuses.length
+            && l.statuses.every(s => selectedStatuses.includes(s))
+          return (
+            <button
+              key={l.label}
+              type="button"
+              disabled={!clickable}
+              onClick={() => clickable && setSelectedStatuses(isActive ? null : l.statuses)}
+              className={`flex items-center gap-2 px-3 py-1.5 rounded-full border text-xs font-medium transition-colors ${
+                !clickable
+                  ? 'bg-white text-[#1C2833] border-[#E5E7E9] cursor-default'
+                  : isActive
+                    ? 'text-white border-transparent'
+                    : 'bg-white text-[#1C2833] border-[#E5E7E9] hover:border-gray-300'
+              }`}
+              style={isActive ? { backgroundColor: l.color, borderColor: l.color } : {}}
+            >
+              <span
+                className="w-2.5 h-2.5 rounded-full flex-shrink-0"
+                style={
+                  l.color === null
+                    ? { backgroundColor: '#fff', border: '1.5px solid #B5B8BC' }
+                    : { backgroundColor: isActive ? 'white' : l.color }
+                }
+              />
+              {l.label}
+              <span className="text-[10px] opacity-70 hidden sm:inline">— {l.desc}</span>
+            </button>
+          )
+        })}
+        {selectedStatuses && (
           <button
-            key={l.label}
-            onClick={() => setSelectedStatus(selectedStatus === l.label.toLowerCase() ? 'all' : l.label.toLowerCase())}
-            className={`flex items-center gap-2 px-3 py-1.5 rounded-full border text-xs font-medium transition-colors ${
-              selectedStatus === l.label.toLowerCase()
-                ? 'text-white border-transparent'
-                : 'bg-white text-[#1C2833] border-[#E5E7E9] hover:border-gray-300'
-            }`}
-            style={selectedStatus === l.label.toLowerCase() ? { backgroundColor: l.color, borderColor: l.color } : {}}
-          >
-            <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: selectedStatus === l.label.toLowerCase() ? 'white' : l.color }} />
-            {l.label}
-            <span className="text-[10px] opacity-70 hidden sm:inline">— {l.desc}</span>
-          </button>
-        ))}
-        {selectedStatus !== 'all' && (
-          <button
-            onClick={() => setSelectedStatus('all')}
+            onClick={() => setSelectedStatuses(null)}
             className="px-3 py-1.5 rounded-full border border-[#E5E7E9] bg-white text-xs text-[#1C2833] hover:bg-gray-50"
           >
             Clear filter
@@ -232,6 +277,36 @@ export default function CalendarPage({ adminView = false }) {
             dayMaxEvents={3}
             eventDisplay="block"
             nowIndicator
+            // Week/Day (timeGrid) time axis: a slot + its label every 30 minutes,
+            // so reservations that don't line up on the hour are easy to place.
+            slotDuration="00:30:00"
+            slotLabelInterval="00:30:00"
+            // Default rendering crams everything into one line ("6:40 - 7:40
+            // Juan dela Cruz — Basketball Court A"), which wraps mid-word in the
+            // narrow columns Week/Day views give each event and reads as noise.
+            // A clear two-line layout (facility bold, client name small below —
+            // color already encodes status, so it doesn't need repeating here)
+            // stays legible even in a narrow slot.
+            eventContent={(arg) => {
+              const { facilityName, userName } = arg.event.extendedProps
+              return (
+                <div className="fc-event-inner">
+                  <div className="fc-event-time">{arg.timeText}</div>
+                  <div className="fc-event-facility">{facilityName}</div>
+                  {adminView && userName && <div className="fc-event-user">{userName}</div>}
+                </div>
+              )
+            }}
+            // dayMaxEvents above only caps month view. Week/Day (timeGrid) views
+            // don't stack overlapping events into a scrollable list on their own —
+            // by default they instead squeeze every concurrent event side-by-side
+            // into equal slivers, so a slot with a dozen same-time reservations
+            // renders as a dozen unreadable slices. eventMaxStack caps how many
+            // show side-by-side before the rest collapse into a "+N more" link.
+            views={{
+              timeGridWeek: { eventMaxStack: 3 },
+              timeGridDay:  { eventMaxStack: 4 },
+            }}
           />
         </CardContent>
       </Card>
@@ -274,9 +349,31 @@ export default function CalendarPage({ adminView = false }) {
           background-color: #C0392B; color: white; border-radius: 50%;
           width: 24px; height: 24px; display: flex; align-items: center; justify-content: center;
         }
-        .fc-event { border-radius: 6px !important; font-size: 0.72rem !important; padding: 1px 4px !important; }
+        .fc-event { border-radius: 6px !important; padding: 2px 5px !important; }
         .fc-toolbar { margin-bottom: 1rem !important; }
         .fc-list-event:hover td { background-color: #FADBD8 !important; }
+
+        /* Week/Day time axis — with a label on every 30-min row (slotDuration ===
+           slotLabelInterval), FullCalendar's default ~1.5em row height packs them
+           with almost no gap. Give each row real height and its label some
+           padding so times read as a list, not a solid wall of text. */
+        .fc-timegrid-slot { height: 2.75em !important; border-color: #F2F3F4 !important; }
+        .fc-timegrid-slot-label-cushion { padding: 4px 10px !important; font-size: 0.78rem; color: #717D7E; }
+        .fc-timegrid-slot-label { vertical-align: top !important; }
+
+        /* Custom two-line event content (see eventContent above) — facility name
+           is the primary line since that's what matters most when scanning a
+           day; client name (admin/staff only) is a smaller secondary line.
+           Both truncate with an ellipsis instead of wrapping mid-word, which is
+           what made narrow Week/Day columns look cluttered before. */
+        .fc-event-inner { overflow: hidden; line-height: 1.25; }
+        .fc-event-time { font-size: 0.68rem; font-weight: 700; opacity: 0.85; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .fc-event-facility { font-size: 0.74rem; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .fc-event-user { font-size: 0.68rem; opacity: 0.85; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .fc-daygrid-event .fc-event-time,
+        .fc-daygrid-event .fc-event-facility,
+        .fc-daygrid-event .fc-event-user { display: inline; margin-right: 4px; }
+        .fc-more-link { font-weight: 600; }
       `}</style>
     </div>
   )

@@ -19,7 +19,13 @@ export default function ProtectedRoute({ roles }) {
   }
 
   if (roles && !roles.includes(user?.role)) {
-    return <Navigate to="/dashboard" replace />
+    // Send them to *their own* dashboard, not unconditionally the client one —
+    // otherwise a staff/admin user hitting any role-mismatched route (including
+    // a client-only one) bounces to a page they also can't access.
+    const home = user?.role === 'administrator' ? '/admin/dashboard'
+      : user?.role === 'staff' ? '/staff/dashboard'
+      : '/dashboard'
+    return <Navigate to={home} replace />
   }
 
   return <Outlet />
