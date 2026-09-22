@@ -7,7 +7,15 @@ const api = axios.create({
   timeout: 15_000,
   headers: {
     Accept: 'application/json',
-    'Content-Type': 'application/json',
+    // No default Content-Type here — axios already sets "application/json" on
+    // its own for a plain object body (see its transformRequest). Forcing it as
+    // a blanket default instead broke every multipart/FormData request in this
+    // app (file uploads: facility photos, authorization letters): axios's own
+    // logic checks the Content-Type header to decide whether a FormData payload
+    // should be sent as real multipart or be JSON.stringify'd — with this
+    // default present it always took the JSON.stringify path, which can't
+    // represent a File at all ("The x field must be a file") and silently
+    // mangled everything else in the same form.
   },
 })
 

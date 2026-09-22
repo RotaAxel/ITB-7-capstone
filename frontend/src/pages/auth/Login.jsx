@@ -78,15 +78,17 @@ export default function Login() {
             <p className="text-white/70 text-sm max-w-[220px] mx-auto leading-relaxed">
               Online facility reservation — book sports facilities anytime, anywhere.
             </p>
-            <div className="mt-8 grid grid-cols-3 gap-3 text-center">
+            {/* Plain text, not cards — a white background + border/shadow here read
+                as a clickable button/tile even though nothing happens on click. */}
+            <div className="mt-8 grid grid-cols-3 divide-x divide-white/20 text-center">
               {[
                 ['Fast',     'Instant confirmation'],
                 ['Booking',  'Reserve in seconds'],
                 ['Security', 'Protected payments'],
               ].map(([title, sub]) => (
-                <div key={title} className="bg-white rounded-xl p-3 border border-[#FADBD8] shadow-sm">
-                  <p className="text-[#C0392B] font-bold text-sm">{title}</p>
-                  <p className="text-[#1C2833] text-xs mt-1 leading-snug">{sub}</p>
+                <div key={title} className="px-2">
+                  <p className="text-white font-bold text-sm tracking-wide uppercase">{title}</p>
+                  <p className="text-white/70 text-xs mt-1 leading-snug">{sub}</p>
                 </div>
               ))}
             </div>

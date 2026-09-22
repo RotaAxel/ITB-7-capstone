@@ -16,7 +16,11 @@ export default function VerifyEmail() {
   const [apiError,   setApiError]   = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [resending,  setResending]  = useState(false)
-  const [cooldown,   setCooldown]   = useState(0)
+  // Starts at 60 (not 0): a code is always freshly sent right before this page is
+  // reached (registration, or an unverified login retry), so "Resend code" should
+  // be gated from the very first render — not just after the user has already
+  // clicked it once.
+  const [cooldown,   setCooldown]   = useState(60)
   const inputRefs = useRef([])
 
   useEffect(() => {

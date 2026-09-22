@@ -15,7 +15,7 @@ class AuthController extends Controller
 {
     // How long a freshly-sent verification code stays valid before the client
     // must request a new one.
-    private const VERIFICATION_CODE_TTL_MINUTES = 15;
+    private const VERIFICATION_CODE_TTL_MINUTES = 1;
 
     // Letters (incl. accented), spaces, and the handful of punctuation marks real
     // names use (O'Brien, dela Cruz, St. James) — no digits or other symbols.

@@ -55,7 +55,15 @@ class ReservationController extends Controller
             'end_time'               => ['required', 'date_format:H:i', 'after:start_time'],
             'selected_amenities'     => ['nullable', 'array'],
             'selected_amenities.*'   => ['integer', 'exists:amenities,id'],
-            'terms_acknowledged'     => ['boolean'],
+            // Not "boolean" — this request posts as multipart/form-data whenever an
+            // authorization letter is attached (a real file upload can't travel any
+            // other way), and a checkbox/flag in multipart arrives as the literal
+            // string "true"/"false". Laravel's "boolean" rule only accepts
+            // true/false/1/0/'1'/'0' — NOT the strings "true"/"false" — so every
+            // reservation submitted together with a required authorization letter
+            // was rejected with a 422 here, no matter what. $request->boolean()
+            // below already normalizes any of these forms correctly.
+            'terms_acknowledged'     => ['sometimes'],
             'type'                   => ['required', 'in:reserve,book'],
             'authorization_letter'   => ['nullable', 'file', 'mimes:pdf,jpg,jpeg,png', 'max:5120'],
         ]);
@@ -112,6 +120,8 @@ class ReservationController extends Controller
             ? $request->file('authorization_letter')->store('authorization-letters', 'local')
             : null;
 
+        $termsAcknowledged = $request->boolean('terms_acknowledged');
+
         $reservation = Reservation::create([
             'user_id'                   => $request->user()->id,
             'facility_id'               => $validated['facility_id'],
@@ -123,8 +133,8 @@ class ReservationController extends Controller
             'selected_amenities'        => $validated['selected_amenities'] ?? null,
             'status'                    => 'pending',
             'type'                      => $validated['type'],
-            'terms_acknowledged'        => $validated['terms_acknowledged'] ?? false,
-            'terms_acknowledged_at'     => ($validated['terms_acknowledged'] ?? false) ? now() : null,
+            'terms_acknowledged'        => $termsAcknowledged,
+            'terms_acknowledged_at'     => $termsAcknowledged ? now() : null,
             'authorization_letter_path' => $letterPath,
         ]);
 

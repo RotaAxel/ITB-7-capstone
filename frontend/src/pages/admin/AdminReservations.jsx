@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { format, parseISO } from 'date-fns'
 import { toast } from 'sonner'
-import { Check, X, ChevronLeft, ChevronRight, CalendarDays, Clock, ClipboardList, AlertCircle, CheckCircle2, Banknote, Eye, FileCheck } from 'lucide-react'
+import { Check, X, ChevronLeft, ChevronRight, CalendarDays, Clock, ClipboardList, AlertCircle, CheckCircle2, Banknote, Eye, FileCheck, Download } from 'lucide-react'
 import api from '@/api/axios'
 import { Card, CardContent } from '@/components/ui/Card'
 import Badge from '@/components/ui/Badge'
@@ -60,22 +60,36 @@ export default function AdminReservations() {
   const [rejectNote,  setRejectNote]  = useState('')
   const [detailModal, setDetailModal] = useState(null)
   const [receiptId,   setReceiptId]   = useState(null)
+  // { url, mimeType, reservationId } | null — an object-URL preview of the letter,
+  // so an admin can actually look at it (PDF or image, inline) before deciding to
+  // approve, instead of only being able to force a download to disk.
+  const [letterPreview, setLetterPreview] = useState(null)
+  const [letterLoading, setLetterLoading] = useState(false)
 
-  const downloadAuthorizationLetter = (id) => {
+  const viewAuthorizationLetter = (id) => {
+    setLetterLoading(true)
     api.get(`/reservations/${id}/authorization-letter`, { responseType: 'blob' })
       .then(res => {
-        // Extension varies (pdf/jpg/png) — infer it from the blob's MIME type rather
-        // than hardcoding one, since setting `a.download` overrides the filename the
-        // server suggested via Content-Disposition.
-        const ext = { 'application/pdf': 'pdf', 'image/jpeg': 'jpg', 'image/png': 'png' }[res.data.type] || 'bin'
-        const url = URL.createObjectURL(res.data)
-        const a   = document.createElement('a')
-        a.href = url
-        a.download = `authorization-letter-reservation-${id}.${ext}`
-        a.click()
-        URL.revokeObjectURL(url)
+        setLetterPreview({ url: URL.createObjectURL(res.data), mimeType: res.data.type, reservationId: id })
       })
-      .catch(() => toast.error('Failed to download the authorization letter.'))
+      .catch(() => toast.error('Failed to load the authorization letter.'))
+      .finally(() => setLetterLoading(false))
+  }
+
+  const closeLetterPreview = () => {
+    if (letterPreview) URL.revokeObjectURL(letterPreview.url)
+    setLetterPreview(null)
+  }
+
+  const downloadAuthorizationLetter = ({ url, mimeType, reservationId }) => {
+    // Extension varies (pdf/jpg/png) — infer it from the blob's MIME type rather
+    // than hardcoding one, since setting `a.download` overrides the filename the
+    // server suggested via Content-Disposition.
+    const ext = { 'application/pdf': 'pdf', 'image/jpeg': 'jpg', 'image/png': 'png' }[mimeType] || 'bin'
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `authorization-letter-reservation-${reservationId}.${ext}`
+    a.click()
   }
 
   const params = {
@@ -485,6 +499,25 @@ export default function AdminReservations() {
               </div>
             }
           >
+            {/* Authorization letter — shown up top, ahead of Approve/Reject in the
+                footer below, so there's no way to approve a "requires letter"
+                facility's reservation without first seeing what was submitted. */}
+            {r.authorization_letter_path && (
+              <div className="flex items-center justify-between gap-3 mb-4 p-3 rounded-lg border border-[#E8DAEF] bg-[#F5EEF8]">
+                <span className="flex items-center gap-2 text-sm font-medium text-[#6C3483]">
+                  <FileCheck className="h-4 w-4 shrink-0" /> Authorization letter attached
+                </span>
+                <Button
+                  size="sm"
+                  loading={letterLoading}
+                  onClick={() => viewAuthorizationLetter(r.id)}
+                  className="bg-[#8E44AD] hover:bg-[#7D3C98] text-white shrink-0"
+                >
+                  <Eye className="h-3.5 w-3.5" /> View Letter
+                </Button>
+              </div>
+            )}
+
             <dl className="space-y-3 text-sm">
               <div className="flex gap-2">
                 <dt className="text-[#1C2833] w-28 shrink-0">Type</dt>
@@ -520,19 +553,6 @@ export default function AdminReservations() {
                       className="flex items-center gap-1.5 text-[#2980B9] hover:underline font-medium"
                     >
                       <Eye className="h-3.5 w-3.5" /> View Receipt
-                    </button>
-                  </dd>
-                </div>
-              )}
-              {r.authorization_letter_path && (
-                <div className="flex gap-2">
-                  <dt className="text-[#1C2833] w-28 shrink-0">Auth. Letter</dt>
-                  <dd>
-                    <button
-                      onClick={() => downloadAuthorizationLetter(r.id)}
-                      className="flex items-center gap-1.5 text-[#2980B9] hover:underline font-medium"
-                    >
-                      <FileCheck className="h-3.5 w-3.5" /> Download Authorization Letter
                     </button>
                   </dd>
                 </div>
@@ -584,6 +604,38 @@ export default function AdminReservations() {
 
       {receiptId && (
         <ReceiptModal reservationId={receiptId} onClose={() => setReceiptId(null)} />
+      )}
+
+      {/* Authorization letter preview — inline (PDF via <iframe>, image via <img>)
+          so an admin can actually look at it, not just force a download. */}
+      {letterPreview && (
+        <Modal
+          title="Authorization Letter"
+          onClose={closeLetterPreview}
+          size="xl"
+          footer={
+            <div className="flex justify-end gap-2">
+              <Button variant="outline" onClick={() => downloadAuthorizationLetter(letterPreview)}>
+                <Download className="h-4 w-4" /> Download
+              </Button>
+              <Button variant="outline" onClick={closeLetterPreview}>Close</Button>
+            </div>
+          }
+        >
+          {letterPreview.mimeType === 'application/pdf' ? (
+            <iframe
+              src={letterPreview.url}
+              title="Authorization letter"
+              className="w-full h-[70vh] rounded-lg border border-[#E5E7E9]"
+            />
+          ) : (
+            <img
+              src={letterPreview.url}
+              alt="Authorization letter"
+              className="w-full max-h-[70vh] object-contain rounded-lg border border-[#E5E7E9]"
+            />
+          )}
+        </Modal>
       )}
     </div>
   )

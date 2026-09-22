@@ -121,11 +121,13 @@ export default function Register() {
             <p className="text-white/60 text-xs max-w-[200px] mx-auto leading-relaxed">
               Create your account and start reserving sports facilities today.
             </p>
-            <div className="mt-8 grid grid-cols-3 gap-3 text-center">
+            {/* Plain text, not cards — a white background + border/shadow here read
+                as a clickable button/tile even though nothing happens on click. */}
+            <div className="mt-8 grid grid-cols-3 divide-x divide-white/20 text-center">
               {[['Free', 'No sign-up fee'], ['Fast', 'Book in minutes'], ['Easy', 'Simple steps']].map(([title, sub]) => (
-                <div key={title} className="bg-white rounded-xl p-3 border border-white/20 shadow-sm">
-                  <p className="text-[#C0392B] font-bold text-xs">{title}</p>
-                  <p className="text-[#1C2833] text-[10px] mt-0.5">{sub}</p>
+                <div key={title} className="px-2">
+                  <p className="text-white font-bold text-xs tracking-wide uppercase">{title}</p>
+                  <p className="text-white/70 text-[10px] mt-1 leading-snug">{sub}</p>
                 </div>
               ))}
             </div>
