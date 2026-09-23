@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useRef } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import {
   format, parseISO,
@@ -11,7 +11,7 @@ import {
   XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
 } from 'recharts'
 import {
-  Download, FileText, FileBarChart, ChevronLeft, ChevronRight,
+  Download, FileText, FileBarChart, ChevronLeft, ChevronRight, Printer,
   TrendingUp, ClipboardList, Banknote, CheckCircle2, Building2, Users, CalendarRange,
 } from 'lucide-react'
 import api from '@/api/axios'
@@ -21,6 +21,7 @@ import Button from '@/components/ui/Button'
 import Spinner from '@/components/ui/Spinner'
 import Input from '@/components/ui/Input'
 import Label from '@/components/ui/Label'
+import Modal from '@/components/ui/Modal'
 
 const SELECT_CLS = 'mt-1 block w-full rounded-xl border border-[#E5E7E9] px-3 py-2 text-sm bg-white transition-all duration-200 hover:border-[#f3c6c1] focus:outline-none focus:ring-2 focus:ring-[#FADBD8] focus:border-[#C0392B]'
 const DATE_INPUT_CLS = 'mt-1 h-9 text-sm rounded-xl transition-all duration-200 hover:border-[#f3c6c1] focus:ring-[#FADBD8] focus:border-[#C0392B]'
@@ -86,6 +87,12 @@ export default function AdminAnalytics() {
   const [page, setPage] = useState(1)
   const [downloadingPdf, setDownloadingPdf] = useState(false)
   const [downloadingFinancial, setDownloadingFinancial] = useState(false)
+  // { url, filename, title } | null — an object-URL preview of the just-generated
+  // report PDF, so the admin can look it over (and print straight from the PDF
+  // viewer if they want) before deciding whether to keep/download it, instead of
+  // it landing straight in their downloads folder unseen.
+  const [reportPreview, setReportPreview] = useState(null)
+  const previewFrameRef = useRef(null)
 
   const { data: summary } = useQuery({
     queryKey: ['admin', 'analytics', 'summary'],
@@ -168,46 +175,58 @@ export default function AdminAnalytics() {
     if (activePeriod === 'yearly')    applyRange(rangeForYear(y))
   }
 
-  const downloadPdf = () => {
-    const pdfParams = { ...reportParams }
-    delete pdfParams.page
-    pdfParams.format = 'pdf'
-    const query = new URLSearchParams(
-      Object.fromEntries(Object.entries(pdfParams).filter(([, v]) => v))
-    ).toString()
+  const closeReportPreview = () => {
+    if (reportPreview) URL.revokeObjectURL(reportPreview.url)
+    setReportPreview(null)
+  }
+
+  const downloadReportPreview = () => {
+    if (!reportPreview) return
+    const a = document.createElement('a')
+    a.href = reportPreview.url
+    a.download = reportPreview.filename
+    a.click()
+  }
+
+  const printReportPreview = () => {
+    // Print straight from the embedded PDF viewer's own render, rather than opening
+    // a separate window — works the same in Chrome/Edge's built-in PDF viewer.
+    previewFrameRef.current?.contentWindow?.print()
+  }
+
+  const openReportPreview = () => {
     setDownloadingPdf(true)
+    // Deliberately ignores the on-screen filters (date range, facility, status,
+    // payment) — the export is always the full reservation report, not whatever
+    // slice happens to be filtered on the page at the time.
     // Large exports render server-side as several chunked PDF tables and can take a while —
     // well past the client's default 15s timeout — so this request gets a longer allowance.
-    api.get(`/admin/reports?${query}`, { responseType: 'blob', timeout: 60_000 })
+    api.get('/admin/reports?format=pdf', { responseType: 'blob', timeout: 60_000 })
       .then(res => {
-        const url = URL.createObjectURL(new Blob([res.data], { type: 'application/pdf' }))
-        const a   = document.createElement('a')
-        a.href     = url
-        a.download = `cabs-report-${format(new Date(), 'yyyyMMdd')}.pdf`
-        a.click()
-        URL.revokeObjectURL(url)
+        setReportPreview({
+          url:      URL.createObjectURL(new Blob([res.data], { type: 'application/pdf' })),
+          filename: `cabs-report-${format(new Date(), 'yyyyMMdd')}.pdf`,
+          title:    'Reservation Report',
+        })
       })
-      .catch(() => toast.error('Failed to download report.'))
+      .catch(() => toast.error('Failed to load report.'))
       .finally(() => setDownloadingPdf(false))
   }
 
-  const downloadFinancialReport = () => {
-    const params = {}
-    if (filters.date_from)   params.date_from   = filters.date_from
-    if (filters.date_to)     params.date_to     = filters.date_to
-    if (filters.facility_id) params.facility_id = filters.facility_id
-    const query = new URLSearchParams(params).toString()
+  const openFinancialPreview = () => {
     setDownloadingFinancial(true)
-    api.get(`/admin/reports/financial?${query}`, { responseType: 'blob', timeout: 60_000 })
+    // Deliberately ignores the on-screen coverage filters (date range, facility) —
+    // the financial export is always the full report, not whatever slice happens
+    // to be filtered on the page at the time.
+    api.get('/admin/reports/financial', { responseType: 'blob', timeout: 60_000 })
       .then(res => {
-        const url = URL.createObjectURL(new Blob([res.data], { type: 'application/pdf' }))
-        const a   = document.createElement('a')
-        a.href     = url
-        a.download = `cabs-financial-report-${format(new Date(), 'yyyyMMdd')}.pdf`
-        a.click()
-        URL.revokeObjectURL(url)
+        setReportPreview({
+          url:      URL.createObjectURL(new Blob([res.data], { type: 'application/pdf' })),
+          filename: `cabs-financial-report-${format(new Date(), 'yyyyMMdd')}.pdf`,
+          title:    'Financial Report',
+        })
       })
-      .catch(() => toast.error('Failed to download financial report.'))
+      .catch(() => toast.error('Failed to load financial report.'))
       .finally(() => setDownloadingFinancial(false))
   }
 
@@ -390,7 +409,7 @@ export default function AdminAnalytics() {
               variant="outline"
               size="sm"
               loading={downloadingFinancial}
-              onClick={downloadFinancialReport}
+              onClick={openFinancialPreview}
               className="flex items-center gap-2 bg-white text-[#C0392B] border-[#C0392B] rounded-full hover:bg-[#C0392B] hover:text-white transition-colors duration-200"
             >
               {!downloadingFinancial && <FileBarChart className="h-4 w-4" />} {downloadingFinancial ? 'Generating…' : 'Financial Report'}
@@ -399,7 +418,7 @@ export default function AdminAnalytics() {
               variant="outline"
               size="sm"
               loading={downloadingPdf}
-              onClick={downloadPdf}
+              onClick={openReportPreview}
               className="flex items-center gap-2 bg-white text-[#C0392B] border-[#C0392B] rounded-full hover:bg-[#C0392B] hover:text-white transition-colors duration-200"
             >
               {!downloadingPdf && <Download className="h-4 w-4" />} {downloadingPdf ? 'Generating…' : 'Export PDF'}
@@ -588,6 +607,35 @@ export default function AdminAnalytics() {
           )}
         </CardContent>
       </Card>
+
+      {/* Report preview — generated PDF shown inline first; admin decides to print
+          or download from here rather than it landing straight in their downloads
+          folder unseen. */}
+      {reportPreview && (
+        <Modal
+          title={`${reportPreview.title} Preview`}
+          onClose={closeReportPreview}
+          size="xl"
+          footer={
+            <div className="flex justify-end gap-2">
+              <Button variant="outline" onClick={printReportPreview}>
+                <Printer className="h-4 w-4" /> Print
+              </Button>
+              <Button variant="outline" onClick={downloadReportPreview}>
+                <Download className="h-4 w-4" /> Download
+              </Button>
+              <Button variant="outline" onClick={closeReportPreview}>Close</Button>
+            </div>
+          }
+        >
+          <iframe
+            ref={previewFrameRef}
+            src={reportPreview.url}
+            title={reportPreview.title}
+            className="w-full h-[75vh] rounded-lg border border-[#E5E7E9]"
+          />
+        </Modal>
+      )}
     </div>
   )
 }

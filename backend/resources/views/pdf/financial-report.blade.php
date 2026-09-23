@@ -92,14 +92,9 @@
         </table>
     </div>
 
-    {{-- Filters applied --}}
-    <div class="filters">
-        <div class="title">Coverage</div>
-        <div class="row">
-            <span>Date Range: <strong>{{ $filters['date_from'] ?? 'Any' }} &ndash; {{ $filters['date_to'] ?? 'Any' }}</strong></span>
-            <span>Facility: <strong>{{ $filters['facility'] ?? 'All facilities' }}</strong></span>
-        </div>
-    </div>
+    {{-- The export is always the full, unfiltered financial history — no on-screen
+         date/facility coverage filters carry over — so there's nothing to
+         summarize here anymore. --}}
 
     {{-- Revenue by Facility --}}
     <h2 class="section-title">Revenue by Facility</h2>
