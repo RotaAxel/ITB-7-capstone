@@ -82,6 +82,18 @@ class ReservationController extends Controller
             ], 422);
         }
 
+        // A facility that requires an authorization letter always needs staff to
+        // actually look at that letter before anything is confirmed — that's
+        // incompatible with "Book", which auto-confirms the moment payment clears
+        // with no human review. The frontend already only offers "Reserve" for
+        // these facilities; this is the server-side backstop against a direct API
+        // call trying to force "book" through anyway.
+        if ($facility->requires_authorization_letter && $validated['type'] === 'book') {
+            return response()->json([
+                'message' => "{$facility->name} requires an authorization letter, so it only accepts reservation requests, not instant bookings.",
+            ], 422);
+        }
+
         // Check participant capacity
         if ($validated['number_of_participants'] > $facility->capacity) {
             return response()->json([
