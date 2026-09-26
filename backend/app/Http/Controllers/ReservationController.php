@@ -239,7 +239,10 @@ class ReservationController extends Controller
         $user        = $request->user();
         $reservation = Reservation::with('payment')->findOrFail($id);
 
-        if ($user->isClient() && $reservation->user_id !== $user->id) {
+        // Cancelling is the client's own call to make — staff/admin "handle"
+        // reservations via approve/reject/complete, but no longer cancel on a
+        // client's behalf. Only the owning client may cancel their own request.
+        if (!$user->isClient() || $reservation->user_id !== $user->id) {
             return response()->json(['message' => 'Forbidden.'], 403);
         }
 

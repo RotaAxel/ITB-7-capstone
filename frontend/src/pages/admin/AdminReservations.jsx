@@ -120,16 +120,6 @@ export default function AdminReservations() {
     onError: err => toast.error(err.response?.data?.message || 'Failed to approve.'),
   })
 
-  const cancelMutation = useMutation({
-    mutationFn: id => api.post(`/reservations/${id}/cancel`),
-    onSuccess: () => {
-      toast.success('Reservation cancelled.')
-      setDetailModal(null)
-      queryClient.invalidateQueries({ queryKey: ['admin', 'reservations'] })
-    },
-    onError: err => toast.error(err.response?.data?.message || 'Failed to cancel.'),
-  })
-
   const completeMutation = useMutation({
     mutationFn: id => api.put(`/admin/reservations/${id}/complete`),
     onSuccess: () => {
@@ -481,19 +471,6 @@ export default function AdminReservations() {
                     </span>
                   )
                 })()}
-                {['pending', 'approved'].includes(r.status) && r.payment?.status !== 'paid' && (
-                  <Button
-                    variant="danger"
-                    loading={cancelMutation.isPending}
-                    onClick={() => {
-                      if (window.confirm(`Cancel reservation for ${r.user?.full_name}?`)) {
-                        cancelMutation.mutate(r.id)
-                      }
-                    }}
-                  >
-                    <X className="h-3.5 w-3.5" /> Cancel Reservation
-                  </Button>
-                )}
                 {!['pending', 'approved', 'confirmed'].includes(r.status) && <span />}
                 <Button variant="outline" onClick={() => setDetailModal(null)}>Close</Button>
               </div>
@@ -612,7 +589,7 @@ export default function AdminReservations() {
         <Modal
           title="Authorization Letter"
           onClose={closeLetterPreview}
-          size="xl"
+          size="3xl"
           footer={
             <div className="flex justify-end gap-2">
               <Button variant="outline" onClick={() => downloadAuthorizationLetter(letterPreview)}>
@@ -626,13 +603,18 @@ export default function AdminReservations() {
             <iframe
               src={letterPreview.url}
               title="Authorization letter"
-              className="w-full h-[70vh] rounded-lg border border-[#E5E7E9]"
+              className="w-full h-[80vh] rounded-lg border border-[#E5E7E9]"
             />
           ) : (
+            // max-w-full/max-h-[80vh] with w-auto/h-auto (not w-full) lets the browser's
+            // own replaced-element sizing pick the largest size that fits both bounds
+            // while preserving aspect ratio — guaranteed to never overflow/scroll either
+            // axis, unlike a fixed w-full which let a portrait ID/letter scan render
+            // small and letterboxed once max-height kicked in.
             <img
               src={letterPreview.url}
               alt="Authorization letter"
-              className="w-full max-h-[70vh] object-contain rounded-lg border border-[#E5E7E9]"
+              className="max-w-full max-h-[80vh] w-auto h-auto object-contain mx-auto block rounded-lg border border-[#E5E7E9]"
             />
           )}
         </Modal>
