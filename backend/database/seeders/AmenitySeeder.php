@@ -11,11 +11,14 @@ class AmenitySeeder extends Seeder
     public function run(): void
     {
         $amenityMap = [
+            // 'fee' is a flat additional charge added to the reservation total if the
+            // client selects that amenity — omitted (defaults to 0) for items that are
+            // just part of using the facility rather than extra rented materials.
             'Basketball Court A' => [
                 ['name' => 'Basketball',    'description' => 'Standard size basketball', 'quantity' => 5],
                 ['name' => 'Ball Pump',     'description' => 'Manual ball pump',          'quantity' => 2],
-                ['name' => 'Scoreboard',    'description' => 'Electronic scoreboard',     'quantity' => 1],
-                ['name' => 'Chairs',        'description' => 'Plastic chairs for players','quantity' => 20],
+                ['name' => 'Scoreboard',    'description' => 'Electronic scoreboard',     'quantity' => 1,   'fee' => 200.00],
+                ['name' => 'Chairs',        'description' => 'Plastic chairs for players','quantity' => 40],
             ],
             'Swimming Pool' => [
                 ['name' => 'Lane Rope',     'description' => 'Standard lane divider rope', 'quantity' => 8],
@@ -27,9 +30,9 @@ class AmenitySeeder extends Seeder
                 ['name' => 'Volleyball',    'description' => 'Standard volleyball',       'quantity' => 4],
                 ['name' => 'Volleyball Net','description' => 'Official volleyball net',   'quantity' => 2],
                 ['name' => 'Badminton Set', 'description' => 'Net, rackets, shuttlecocks','quantity' => 3],
-                ['name' => 'Folding Tables','description' => 'Folding tables for events', 'quantity' => 10],
-                ['name' => 'Folding Chairs','description' => 'Folding chairs for events', 'quantity' => 50],
-                ['name' => 'Sound System',  'description' => 'PA system with microphone', 'quantity' => 1],
+                ['name' => 'Folding Tables','description' => 'Folding tables for events', 'quantity' => 20,  'fee' => 300.00],
+                ['name' => 'Folding Chairs','description' => 'Folding chairs for events', 'quantity' => 100, 'fee' => 300.00],
+                ['name' => 'Sound System',  'description' => 'PA system with microphone', 'quantity' => 1,   'fee' => 500.00],
             ],
             'Tennis Court' => [
                 ['name' => 'Tennis Racket', 'description' => 'Standard tennis racket',   'quantity' => 4, 'is_available' => false],

@@ -18,6 +18,7 @@ function getSportTheme(name = '') {
   if (n.includes('tennis'))                              return { color: '#84CC16', dark: '#4D7C0F', label: 'Tennis Court'     }
   if (n.includes('baseball'))                            return { color: '#78350F', dark: '#451A03', label: 'Baseball Field'  }
   if (n.includes('gym') || n.includes('gymnasium') || n.includes('multi')) return { color: '#6366F1', dark: '#4338CA', label: 'Gymnasium' }
+  if (n.includes('field'))                               return { color: '#2E8B57', dark: '#1F5C3A', label: 'Open Field'      }
   return { color: '#C0392B', dark: '#96281B', label: 'Sports Facility' }
 }
 
@@ -88,13 +89,13 @@ export default function GuestPage() {
           <div className="inline-flex items-center justify-center w-40 h-24 bg-white rounded-2xl mb-6 shadow-xl p-3 border border-white/20">
             <img src="/logoCabs.png" alt="CABS — Cabuyao Athletes Basic School" className="w-full h-full object-contain" />
           </div>
-          <h1 className="text-4xl sm:text-5xl font-black text-white leading-tight mb-4">
-            Reserve CABS<br />Sports Facilities Online
-          </h1>
-          <p className="text-white/80 text-lg mb-8 max-w-lg mx-auto leading-relaxed">
+          {/* The page's one semantic <h1> — kept at the tagline's normal weight/size
+              rather than a large bold headline, per feedback that the oversized
+              "Reserve CABS Sports Facilities Online" title was too dominant. */}
+          <h1 className="text-white/80 text-lg font-normal mb-8 max-w-lg mx-auto leading-relaxed">
             Browse courts, pools, gyms and more. Create a free account to book
             facilities and manage your reservations anytime, anywhere.
-          </p>
+          </h1>
           <div className="flex flex-wrap items-center justify-center gap-3">
             <Link to="/register"
               className="flex items-center gap-2 bg-white text-[#C0392B] font-bold px-6 py-3 rounded-xl hover:bg-[#FADBD8] transition-colors shadow-lg text-sm">

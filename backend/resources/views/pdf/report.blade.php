@@ -177,7 +177,13 @@
         @if($reservations->count() > 0)
         <tfoot>
             <tr>
-                <td class="col-client">Total ({{ number_format($reservations->count()) }} shown)</td>
+                {{-- Revenue/paid-count totals always cover every matching record, not
+                     just the rows rendered above (capped at $maxRows) — so the label
+                     says so explicitly whenever the table itself had to be truncated,
+                     rather than implying the total only adds up the visible rows. --}}
+                <td class="col-client">
+                    Total ({{ $truncated ? number_format($totalMatching) . ' matching, ' . number_format($reservations->count()) . ' shown' : number_format($reservations->count()) . ' shown' }})
+                </td>
                 <td class="col-facility"></td>
                 <td class="col-datetime"></td>
                 <td class="col-amount">&#8369;{{ number_format($totalRevenue, 2) }}</td>

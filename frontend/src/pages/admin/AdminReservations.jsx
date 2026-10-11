@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { format, parseISO } from 'date-fns'
 import { toast } from 'sonner'
-import { Check, X, ChevronLeft, ChevronRight, CalendarDays, Clock, ClipboardList, AlertCircle, CheckCircle2, Banknote, Eye, FileCheck, Download } from 'lucide-react'
+import { Check, X, ChevronLeft, ChevronRight, CalendarDays, Clock, ClipboardList, AlertCircle, CheckCircle2, Banknote, Eye, FileCheck, Download, Star } from 'lucide-react'
 import api from '@/api/axios'
 import { Card, CardContent } from '@/components/ui/Card'
 import Badge from '@/components/ui/Badge'
@@ -59,20 +59,24 @@ export default function AdminReservations() {
   const [rejectModal, setRejectModal] = useState(null)
   const [rejectNote,  setRejectNote]  = useState('')
   const [detailModal, setDetailModal] = useState(null)
+  const [internalNoteDraft, setInternalNoteDraft] = useState('')
   const [receiptId,   setReceiptId]   = useState(null)
-  // { url, mimeType, reservationId } | null — an object-URL preview of the letter,
-  // so an admin can actually look at it (PDF or image, inline) before deciding to
-  // approve, instead of only being able to force a download to disk.
+  // { url, mimeType, reservationId, kind } | null — an object-URL preview of a
+  // letter, so an admin can actually look at it (PDF or image, inline) before
+  // deciding to approve, instead of only being able to force a download to disk.
+  // kind is 'authorization' | 'request' — the two are independent documents
+  // (see Facility::requires_authorization_letter / requires_request_letter) but
+  // share this same preview/download machinery.
   const [letterPreview, setLetterPreview] = useState(null)
   const [letterLoading, setLetterLoading] = useState(false)
 
-  const viewAuthorizationLetter = (id) => {
+  const viewLetter = (id, kind) => {
     setLetterLoading(true)
-    api.get(`/reservations/${id}/authorization-letter`, { responseType: 'blob' })
+    api.get(`/reservations/${id}/${kind}-letter`, { responseType: 'blob' })
       .then(res => {
-        setLetterPreview({ url: URL.createObjectURL(res.data), mimeType: res.data.type, reservationId: id })
+        setLetterPreview({ url: URL.createObjectURL(res.data), mimeType: res.data.type, reservationId: id, kind })
       })
-      .catch(() => toast.error('Failed to load the authorization letter.'))
+      .catch(() => toast.error(`Failed to load the ${kind} letter.`))
       .finally(() => setLetterLoading(false))
   }
 
@@ -81,14 +85,14 @@ export default function AdminReservations() {
     setLetterPreview(null)
   }
 
-  const downloadAuthorizationLetter = ({ url, mimeType, reservationId }) => {
+  const downloadLetter = ({ url, mimeType, reservationId, kind }) => {
     // Extension varies (pdf/jpg/png) — infer it from the blob's MIME type rather
     // than hardcoding one, since setting `a.download` overrides the filename the
     // server suggested via Content-Disposition.
     const ext = { 'application/pdf': 'pdf', 'image/jpeg': 'jpg', 'image/png': 'png' }[mimeType] || 'bin'
     const a = document.createElement('a')
     a.href = url
-    a.download = `authorization-letter-reservation-${reservationId}.${ext}`
+    a.download = `${kind}-letter-reservation-${reservationId}.${ext}`
     a.click()
   }
 
@@ -120,6 +124,30 @@ export default function AdminReservations() {
     onError: err => toast.error(err.response?.data?.message || 'Failed to approve.'),
   })
 
+  // Group (multi-date bundle) actions — reuse the exact same per-reservation
+  // approve/reject the single endpoints call, just looped server-side across
+  // every date in the bundle (see ReservationController::approveGroup/rejectGroup).
+  const approveGroupMutation = useMutation({
+    mutationFn: groupId => api.put(`/admin/reservations/groups/${groupId}/approve`),
+    onSuccess: res => {
+      toast.success(res.data.message)
+      setDetailModal(null)
+      queryClient.invalidateQueries({ queryKey: ['admin', 'reservations'] })
+    },
+    onError: err => toast.error(err.response?.data?.message || 'Failed to approve the bundle.'),
+  })
+
+  const rejectGroupMutation = useMutation({
+    mutationFn: ({ groupId, note }) => api.put(`/admin/reservations/groups/${groupId}/reject`, { admin_note: note }),
+    onSuccess: res => {
+      toast.success(res.data.message)
+      setRejectModal(null)
+      setRejectNote('')
+      queryClient.invalidateQueries({ queryKey: ['admin', 'reservations'] })
+    },
+    onError: err => toast.error(err.response?.data?.message || 'Failed to reject the bundle.'),
+  })
+
   const completeMutation = useMutation({
     mutationFn: id => api.put(`/admin/reservations/${id}/complete`),
     onSuccess: () => {
@@ -140,6 +168,18 @@ export default function AdminReservations() {
       queryClient.invalidateQueries({ queryKey: ['admin', 'reservations'] })
     },
     onError: err => toast.error(err.response?.data?.message || 'Failed to reject.'),
+  })
+
+  const notesMutation = useMutation({
+    mutationFn: ({ id, data }) => api.put(`/admin/reservations/${id}/notes`, data),
+    onSuccess: res => {
+      toast.success('Saved.')
+      // Merge rather than close — the modal reads from this snapshot, not the
+      // query cache, and the admin likely wants to keep looking at it.
+      setDetailModal(prev => (prev ? { ...prev, ...res.data } : prev))
+      queryClient.invalidateQueries({ queryKey: ['admin', 'reservations'] })
+    },
+    onError: err => toast.error(err.response?.data?.message || 'Failed to save.'),
   })
 
   const changeStatus = s => { setStatus(s); setPage(1) }
@@ -267,8 +307,8 @@ export default function AdminReservations() {
                   return (
                     <div
                       key={r.id}
-                      onClick={() => setDetailModal(r)}
-                      className={`grid grid-cols-12 items-center px-5 py-4 border-l-4 ${border} hover:bg-[#FADBD8]/10 transition-colors cursor-pointer gap-2`}
+                      onClick={() => { setDetailModal(r); setInternalNoteDraft(r.internal_note ?? '') }}
+                      className={`grid grid-cols-12 items-center px-5 py-4 border-l-4 ${border} ${r.is_priority ? 'bg-amber-50/60' : ''} hover:bg-[#FADBD8]/10 transition-colors cursor-pointer gap-2`}
                     >
                       {/* Client */}
                       <div className="col-span-3 flex items-center gap-3 min-w-0">
@@ -318,8 +358,17 @@ export default function AdminReservations() {
                       {/* Status + quick actions */}
                       <div className="col-span-2 flex flex-col items-end gap-2">
                         <div className="flex flex-wrap items-center justify-end gap-1">
+                          {r.is_priority && (
+                            <Star className="h-3.5 w-3.5 text-[#F39C12] fill-[#F39C12]" title="Priority" />
+                          )}
+                          {r.reservation_group_id && (
+                            <CalendarDays className="h-3.5 w-3.5 text-[#2980B9]" title="Part of a multi-date bundle" />
+                          )}
                           {r.authorization_letter_path && (
                             <FileCheck className="h-3.5 w-3.5 text-[#8E44AD]" title="Authorization letter attached" />
+                          )}
+                          {r.request_letter_path && (
+                            <FileCheck className="h-3.5 w-3.5 text-[#2980B9]" title="Request letter attached" />
                           )}
                           <TypeBadge type={r.type} />
                           <Badge status={r.status} />
@@ -476,9 +525,62 @@ export default function AdminReservations() {
               </div>
             }
           >
-            {/* Authorization letter — shown up top, ahead of Approve/Reject in the
-                footer below, so there's no way to approve a "requires letter"
-                facility's reservation without first seeing what was submitted. */}
+            {/* Bundle — this reservation is one date among several submitted
+                together (see ReservationController::store()'s reservation_dates[]
+                path). Approve/reject here still only acts on this one date — these
+                two buttons act on the whole bundle at once instead. */}
+            {r.reservation_group_id && (
+              <div className="flex items-center justify-between gap-3 mb-4 p-3 rounded-lg border border-[#D6EAF8] bg-[#EBF5FB]">
+                <span className="flex items-center gap-2 text-sm font-medium text-[#1F618D]">
+                  <CalendarDays className="h-4 w-4 shrink-0" /> Part of a multi-date bundle
+                </span>
+                {['pending', 'approved'].includes(r.status) && (
+                  <div className="flex items-center gap-2 shrink-0">
+                    <Button
+                      size="sm"
+                      loading={approveGroupMutation.isPending}
+                      onClick={() => approveGroupMutation.mutate(r.reservation_group_id)}
+                      className="bg-[#2980B9] hover:bg-[#21618C] text-white"
+                    >
+                      Approve Whole Bundle
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="danger"
+                      onClick={() => {
+                        setDetailModal(null)
+                        setRejectModal({ groupId: r.reservation_group_id, clientName: r.user?.full_name ?? '' })
+                        setRejectNote('')
+                      }}
+                    >
+                      Reject Whole Bundle
+                    </Button>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Priority — e.g. the mayor's office / city hall events. Surfaces this
+                reservation at the top of the admin queue (see adminIndex()'s sort)
+                and tints its row, so it's never lost in a busy list. */}
+            <div className="flex items-center justify-between gap-3 mb-4 p-3 rounded-lg border border-amber-200 bg-amber-50">
+              <span className="flex items-center gap-2 text-sm font-medium text-amber-700">
+                <Star className={`h-4 w-4 shrink-0 ${r.is_priority ? 'fill-amber-500 text-amber-500' : ''}`} />
+                {r.is_priority ? 'Marked as priority' : 'Not marked as priority'}
+              </span>
+              <Button
+                size="sm"
+                variant="outline"
+                loading={notesMutation.isPending}
+                onClick={() => notesMutation.mutate({ id: r.id, data: { is_priority: !r.is_priority } })}
+              >
+                {r.is_priority ? 'Unmark Priority' : 'Mark as Priority'}
+              </Button>
+            </div>
+
+            {/* Letters — shown up top, ahead of Approve/Reject in the footer below,
+                so there's no way to approve a "requires letter" facility's
+                reservation without first seeing what was submitted. */}
             {r.authorization_letter_path && (
               <div className="flex items-center justify-between gap-3 mb-4 p-3 rounded-lg border border-[#E8DAEF] bg-[#F5EEF8]">
                 <span className="flex items-center gap-2 text-sm font-medium text-[#6C3483]">
@@ -487,8 +589,23 @@ export default function AdminReservations() {
                 <Button
                   size="sm"
                   loading={letterLoading}
-                  onClick={() => viewAuthorizationLetter(r.id)}
+                  onClick={() => viewLetter(r.id, 'authorization')}
                   className="bg-[#8E44AD] hover:bg-[#7D3C98] text-white shrink-0"
+                >
+                  <Eye className="h-3.5 w-3.5" /> View Letter
+                </Button>
+              </div>
+            )}
+            {r.request_letter_path && (
+              <div className="flex items-center justify-between gap-3 mb-4 p-3 rounded-lg border border-[#D6EAF8] bg-[#EBF5FB]">
+                <span className="flex items-center gap-2 text-sm font-medium text-[#1F618D]">
+                  <FileCheck className="h-4 w-4 shrink-0" /> Request letter attached
+                </span>
+                <Button
+                  size="sm"
+                  loading={letterLoading}
+                  onClick={() => viewLetter(r.id, 'request')}
+                  className="bg-[#2980B9] hover:bg-[#21618C] text-white shrink-0"
                 >
                   <Eye className="h-3.5 w-3.5" /> View Letter
                 </Button>
@@ -513,6 +630,9 @@ export default function AdminReservations() {
                 ['Duration',     duration != null ? `${duration}h` : '—'],
                 ['Participants', r.number_of_participants],
                 ['Purpose',      r.purpose],
+                ...(r.waste_management_plan ? [['Waste Management', r.waste_management_plan]] : []),
+                ...(r.crowd_management_plan ? [['Crowd Management', r.crowd_management_plan]] : []),
+                ...(r.event_considerations  ? [['Event Considerations', r.event_considerations]] : []),
                 ['Amount',       r.payment ? `₱${Number(r.payment.amount).toLocaleString()}` : '—'],
                 ['Payment',      r.payment?.status ?? '—'],
               ].map(([label, value]) => (
@@ -541,23 +661,53 @@ export default function AdminReservations() {
                 </div>
               )}
             </dl>
+
+            {/* Internal note — staff/admin's own private reference (e.g. "VIP,
+                handle with care" or "client called to confirm details"). Distinct
+                from "Admin Note" above, which is the client-facing rejection
+                reason — this one is never shown to the client, and can be edited
+                at any status, not just when rejecting. */}
+            <div className="mt-4 pt-4 border-t border-[#E5E7E9]">
+              <Label>Internal Note (staff/admin only — never shown to the client)</Label>
+              <textarea
+                rows={3}
+                value={internalNoteDraft}
+                onChange={e => setInternalNoteDraft(e.target.value)}
+                placeholder="e.g. VIP — mayor's office event, handle with care."
+                className="mt-1 w-full rounded-lg border border-[#E5E7E9] px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#FADBD8] focus:border-[#C0392B] resize-none"
+              />
+              <div className="flex justify-end mt-2">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  loading={notesMutation.isPending}
+                  disabled={internalNoteDraft === (r.internal_note ?? '')}
+                  onClick={() => notesMutation.mutate({ id: r.id, data: { internal_note: internalNoteDraft } })}
+                >
+                  Save Note
+                </Button>
+              </div>
+            </div>
           </Modal>
         )
       })()}
 
-      {/* Reject modal */}
+      {/* Reject modal — rejectModal.groupId (instead of .id) means this rejects
+          every date in a bundle at once (see Reject Whole Bundle above). */}
       {rejectModal && (
         <Modal
-          title="Reject Reservation"
+          title={rejectModal.groupId ? 'Reject Whole Bundle' : 'Reject Reservation'}
           onClose={() => setRejectModal(null)}
           footer={
             <div className="flex justify-end gap-2">
               <Button variant="outline" onClick={() => setRejectModal(null)}>Cancel</Button>
               <Button
                 variant="danger"
-                disabled={!rejectNote.trim() || rejectMutation.isPending}
-                loading={rejectMutation.isPending}
-                onClick={() => rejectMutation.mutate({ id: rejectModal.id, note: rejectNote })}
+                disabled={!rejectNote.trim() || rejectMutation.isPending || rejectGroupMutation.isPending}
+                loading={rejectMutation.isPending || rejectGroupMutation.isPending}
+                onClick={() => rejectModal.groupId
+                  ? rejectGroupMutation.mutate({ groupId: rejectModal.groupId, note: rejectNote })
+                  : rejectMutation.mutate({ id: rejectModal.id, note: rejectNote })}
               >
                 Confirm Rejection
               </Button>
@@ -565,7 +715,8 @@ export default function AdminReservations() {
           }
         >
           <p className="text-sm text-gray-600 mb-3">
-            Rejecting reservation from <strong>{rejectModal.clientName}</strong>.
+            Rejecting {rejectModal.groupId ? 'every date in this bundle' : 'reservation'} from{' '}
+            <strong>{rejectModal.clientName}</strong>.
             A reason is required and will be sent to the client.
           </p>
           <Label>Reason for rejection *</Label>
@@ -583,16 +734,17 @@ export default function AdminReservations() {
         <ReceiptModal reservationId={receiptId} onClose={() => setReceiptId(null)} />
       )}
 
-      {/* Authorization letter preview — inline (PDF via <iframe>, image via <img>)
-          so an admin can actually look at it, not just force a download. */}
+      {/* Letter preview (authorization or request) — inline (PDF via <iframe>,
+          image via <img>) so an admin can actually look at it, not just force a
+          download. */}
       {letterPreview && (
         <Modal
-          title="Authorization Letter"
+          title={letterPreview.kind === 'request' ? 'Request Letter' : 'Authorization Letter'}
           onClose={closeLetterPreview}
           size="3xl"
           footer={
             <div className="flex justify-end gap-2">
-              <Button variant="outline" onClick={() => downloadAuthorizationLetter(letterPreview)}>
+              <Button variant="outline" onClick={() => downloadLetter(letterPreview)}>
                 <Download className="h-4 w-4" /> Download
               </Button>
               <Button variant="outline" onClick={closeLetterPreview}>Close</Button>
@@ -602,7 +754,7 @@ export default function AdminReservations() {
           {letterPreview.mimeType === 'application/pdf' ? (
             <iframe
               src={letterPreview.url}
-              title="Authorization letter"
+              title={letterPreview.kind === 'request' ? 'Request letter' : 'Authorization letter'}
               className="w-full h-[80vh] rounded-lg border border-[#E5E7E9]"
             />
           ) : (
@@ -613,7 +765,7 @@ export default function AdminReservations() {
             // small and letterboxed once max-height kicked in.
             <img
               src={letterPreview.url}
-              alt="Authorization letter"
+              alt={letterPreview.kind === 'request' ? 'Request letter' : 'Authorization letter'}
               className="max-w-full max-h-[80vh] w-auto h-auto object-contain mx-auto block rounded-lg border border-[#E5E7E9]"
             />
           )}

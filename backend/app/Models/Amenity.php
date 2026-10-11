@@ -14,6 +14,7 @@ class Amenity extends Model
         'name',
         'description',
         'quantity',
+        'fee',
         'is_available',
     ];
 
@@ -21,6 +22,7 @@ class Amenity extends Model
     {
         return [
             'is_available' => 'boolean',
+            'fee' => 'decimal:2',
         ];
     }
 

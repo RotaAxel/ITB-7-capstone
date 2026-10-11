@@ -27,7 +27,14 @@ class AnalyticsController extends Controller
             ->whereYear('paid_at', $now->year)
             ->sum('amount');
 
+        // Only real bookings count toward "most reserved" — a rejected/cancelled/
+        // still-pending request never actually used the facility. Without this
+        // filter, a facility with a lot of rejected requests could outrank one
+        // that's genuinely busier (confirmed via real data: counting every status
+        // put every facility's figure at 1000+ "bookings" when under half of that
+        // ever actually happened).
         $mostReservedFacility = Reservation::select('facility_id', DB::raw('COUNT(*) as total'))
+            ->whereIn('status', ['approved', 'confirmed', 'completed'])
             ->groupBy('facility_id')
             ->orderByDesc('total')
             ->with('facility:id,name')
@@ -100,6 +107,10 @@ class AnalyticsController extends Controller
                 DB::raw('COUNT(*) as count')
             )
             ->where('reservation_date', '>=', now()->subDays(90)->toDateString())
+            // Same real-bookings filter as facilityUtilization() — otherwise a day
+            // with a lot of rejected/cancelled requests reads as "busy" here even
+            // though the facility was never actually used on it.
+            ->whereIn('status', ['approved', 'confirmed', 'completed'])
             ->groupBy('day_num')
             ->orderBy('day_num')
             ->get()
@@ -139,12 +150,18 @@ class AnalyticsController extends Controller
             $truncated     = $totalMatching > $reservations->count();
 
             // Totals for the closing row at the very end of the table — paid amount
-            // only (an unpaid/pending row has no real amount to add to a revenue sum).
-            $totalRevenue = (float) $reservations->reduce(
-                fn($carry, $r) => $carry + ($r->payment && $r->payment->status === 'paid' ? $r->payment->amount : 0),
-                0
-            );
-            $paidCount = $reservations->filter(fn($r) => $r->payment && $r->payment->status === 'paid')->count();
+            // only (an unpaid/pending row has no real amount to add to a revenue
+            // sum). Computed from every record matching the filters, not just the
+            // $reservations actually rendered below (capped at $maxRows) — a
+            // truncated report (any filter matching more than 600 rows, easily hit
+            // by e.g. a yearly report) would otherwise silently understate its own
+            // totals, since they'd only reflect the rows that happened to fit on
+            // the page. pluck('id') on the same filtered $query keeps this in sync
+            // with whatever the table itself is filtered to, without re-hydrating
+            // full Reservation/Payment models for records never actually shown.
+            $matchingIds  = (clone $query)->pluck('id');
+            $totalRevenue = (float) Payment::whereIn('reservation_id', $matchingIds)->where('status', 'paid')->sum('amount');
+            $paidCount    = Payment::whereIn('reservation_id', $matchingIds)->where('status', 'paid')->count();
 
             // Small safety margin on top of the row cap above — chunked tables in the
             // template already keep this well under the default 512M limit. Rendering

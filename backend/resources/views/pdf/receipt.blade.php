@@ -91,15 +91,23 @@
 
     @if(!empty($amenities))
         <div class="divider-dashed"></div>
-        <div class="bold small">AMENITIES</div>
+        <div class="bold small">AMENITIES / MATERIALS</div>
         @foreach($amenities as $amenity)
-            <div class="small">{{ $amenity['quantity'] }}x {{ $amenity['name'] }}</div>
+            <table class="row small">
+                <tr>
+                    <td>{{ $amenity['quantity'] }}x {{ $amenity['name'] }}</td>
+                    <td class="value">{{ $amenity['fee'] > 0 ? '+&#8369;' . number_format($amenity['fee'], 2) : '' }}</td>
+                </tr>
+            </table>
         @endforeach
     @endif
 
     <div class="divider-dashed"></div>
 
-    <table class="row"><tr><td>Subtotal</td><td class="value">&#8369;{{ number_format($payment->amount, 2) }}</td></tr></table>
+    <table class="row"><tr><td>Facility Rental{{ $residentRateApplied ? ' (Cabuyeño rate)' : '' }}</td><td class="value">&#8369;{{ number_format($facilitySubtotal, 2) }}</td></tr></table>
+    @if($amenitiesFee > 0)
+        <table class="row"><tr><td>Amenities / Materials</td><td class="value">&#8369;{{ number_format($amenitiesFee, 2) }}</td></tr></table>
+    @endif
     <table class="row"><tr><td>Discount</td><td class="value">&#8369;0.00</td></tr></table>
     <div class="divider-solid"></div>
     <table class="row total-row"><tr><td>TOTAL PAID</td><td class="value">&#8369;{{ number_format($payment->amount, 2) }}</td></tr></table>
@@ -114,6 +122,35 @@
     <div class="status-paid">PAID</div>
 
     <div class="barcode-text">*{{ $payment->receipt_number }}*</div>
+
+    {{-- Condensed Terms & Conditions — the full numbered clauses shown and agreed
+         to at booking time don't fit a narrow 80mm receipt, so this is the
+         essential summary plus this specific facility's own restrictions/fees
+         (see facilities.restrictions / excessive_mess_fee / damage_clearance_fee),
+         not a replacement for the full terms. --}}
+    <div class="divider-dashed"></div>
+    <div class="bold small center">TERMS &amp; CONDITIONS</div>
+    <div class="small" style="margin-top: 4px; line-height: 1.4;">
+        No refunds once payment has been made. CABS / Cabuyao City Hall may cancel any
+        reservation for maintenance, emergencies, or public need, with a full refund in
+        that case. Users are liable for any damage caused to the facility or equipment.
+        @if($reservation->facility->restrictions)
+            <br><br><span class="bold">Restrictions:</span> {{ $reservation->facility->restrictions }}
+        @endif
+        @if($reservation->facility->excessive_mess_fee > 0 || $reservation->facility->damage_clearance_fee > 0)
+            <br><br>
+            @if($reservation->facility->excessive_mess_fee > 0)
+                Excessive mess fee: &#8369;{{ number_format($reservation->facility->excessive_mess_fee, 2) }}.
+            @endif
+            @if($reservation->facility->damage_clearance_fee > 0)
+                Damage/clearance fee: &#8369;{{ number_format($reservation->facility->damage_clearance_fee, 2) }}.
+            @endif
+            (Assessed after inspection, not charged upfront.)
+        @endif
+    </div>
+    <div class="small muted" style="margin-top: 4px;">
+        Full Terms &amp; Conditions were presented and agreed to at the time of booking.
+    </div>
 
     <div class="footer">
         <div class="thanks">Thank you for booking with CABS!</div>

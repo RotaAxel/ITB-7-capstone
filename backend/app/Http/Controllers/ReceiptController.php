@@ -23,26 +23,58 @@ class ReceiptController extends Controller
             return response()->json(['message' => 'Receipt is only available for paid reservations.'], 422);
         }
 
-        // Build selected amenities list
+        // Build selected amenities list, and split the paid amount into its two
+        // components (facility rental vs. amenities/materials fees) purely for
+        // display — the actual charged amount always comes from $payment->amount.
         $amenities = [];
+        $amenitiesFee = 0;
         if ($reservation->selected_amenities) {
             $amenities = \App\Models\Amenity::whereIn('id', $reservation->selected_amenities)
-                ->get(['id', 'name', 'quantity'])
+                ->get(['id', 'name', 'quantity', 'fee'])
                 ->toArray();
+            $amenitiesFee = collect($amenities)->sum('fee');
         }
+        $facilitySubtotal = round($payment->amount - $amenitiesFee, 2);
+
+        // Purely a display label — the Cabuyeño discount (if any) is already baked
+        // into $payment->amount from the moment the reservation was created (see
+        // Facility::rateFor() in ReservationController::store()).
+        $residentRateApplied = $reservation->user->isVerifiedResident()
+            && $reservation->facility->resident_price_per_hour !== null;
 
         // Narrow "till roll" page instead of A4 — 80mm is the standard thermal
         // receipt width. Height is estimated from content (base layout + one line
-        // per amenity) rather than a fixed A4 height, so there's no leftover blank
-        // page below a short receipt and no overflow onto a second page for a long
-        // one.
+        // per amenity + wrapped lines of the terms/restrictions text) rather than a
+        // fixed A4 height, so there's no leftover blank page below a short receipt
+        // and no overflow onto a second page for a long one.
         $widthPt  = 227; // 80mm
-        $heightPt = 560 + (count($amenities) * 16);
+
+        // Same condensed terms text the template renders (see receipt.blade.php) —
+        // wordwrap at roughly the receipt's usable character width (9px font in
+        // ~199pt of content width) to estimate how many lines it'll actually take.
+        $facility = $reservation->facility;
+        $termsText = 'No refunds once payment has been made. CABS / Cabuyao City Hall may cancel any '
+            . 'reservation for maintenance, emergencies, or public need, with a full refund in that '
+            . 'case. Users are liable for any damage caused to the facility or equipment.';
+        if ($facility->restrictions) {
+            $termsText .= ' Restrictions: ' . $facility->restrictions;
+        }
+        if ($facility->excessive_mess_fee > 0 || $facility->damage_clearance_fee > 0) {
+            $termsText .= ' Fees apply if applicable, assessed after inspection, not charged upfront.';
+        }
+        $termsLines = substr_count(wordwrap($termsText, 44, "\n", true), "\n") + 1;
+
+        // +16 flat covers the extra "Amenities / Materials" subtotal row the
+        // template adds when $amenitiesFee > 0.
+        $heightPt = 620 + (count($amenities) * 16) + ($termsLines * 12) + ($amenitiesFee > 0 ? 16 : 0);
 
         $pdf = Pdf::loadView('pdf.receipt', [
-            'reservation' => $reservation,
-            'payment'     => $payment,
-            'amenities'   => $amenities,
+            'reservation'      => $reservation,
+            'payment'          => $payment,
+            'amenities'        => $amenities,
+            'amenitiesFee'     => $amenitiesFee,
+            'facilitySubtotal' => $facilitySubtotal,
+            'residentRateApplied' => $residentRateApplied,
         ])->setPaper([0, 0, $widthPt, $heightPt]);
 
         $filename = "CABS-Receipt-{$payment->receipt_number}.pdf";

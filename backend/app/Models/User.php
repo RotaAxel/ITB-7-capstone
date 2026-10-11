@@ -24,6 +24,9 @@ class User extends Authenticatable
         'email_verified_at',
         'verification_code',
         'verification_code_expires_at',
+        'residency_proof_path',
+        'residency_status',
+        'residency_admin_note',
     ];
 
     protected $hidden = [
@@ -70,5 +73,12 @@ class User extends Authenticatable
     public function isAdminOrStaff(): bool
     {
         return in_array($this->role, ['administrator', 'staff']);
+    }
+
+    // Verified Cabuyeño residents get Facility::resident_price_per_hour when set —
+    // uploading proof alone isn't enough, an admin must have reviewed and verified it.
+    public function isVerifiedResident(): bool
+    {
+        return $this->residency_status === 'verified';
     }
 }

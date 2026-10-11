@@ -148,6 +148,138 @@ class PaymentController extends Controller
         ]);
     }
 
+    // ─── Group Payment Link: pay every date in a bundle with one checkout ─────
+    // One PayMongo Payment Link for the group's total — the same link id/url is
+    // stamped on every member Payment row so the group's status can be checked
+    // from any one of them, and a successful payment marks every member paid via
+    // the same handleSuccess() used for a single reservation (so each date still
+    // gets its own normal receipt_number and confirmation).
+
+    public function createGroupLink(Request $request, $groupId)
+    {
+        $user = $request->user();
+
+        $reservations = Reservation::with(['facility', 'payment'])
+            ->where('reservation_group_id', $groupId)
+            ->get();
+
+        if ($reservations->isEmpty()) {
+            return response()->json(['message' => 'Reservation group not found.'], 404);
+        }
+
+        if ($reservations->first()->user_id !== $user->id) {
+            return response()->json(['message' => 'Forbidden.'], 403);
+        }
+
+        foreach ($reservations as $reservation) {
+            if ($blocked = $this->paymentNotYetAllowedMessage($reservation)) {
+                return response()->json(['message' => $blocked], 422);
+            }
+            if (!$reservation->terms_acknowledged) {
+                return response()->json(['message' => 'You must acknowledge the terms before payment.'], 422);
+            }
+        }
+
+        $payments = $reservations->map(fn ($r) => $r->payment);
+
+        if ($payments->contains(fn ($p) => !$p)) {
+            return response()->json(['message' => 'Payment record not found for one or more reservations.'], 422);
+        }
+
+        if ($payments->contains(fn ($p) => $p->status === 'paid')) {
+            return response()->json(['message' => 'This group has already been paid.'], 422);
+        }
+
+        $totalAmount = $payments->sum('amount');
+        $amountCents = (int) round($totalAmount * 100);
+
+        if ($amountCents < 100) {
+            return response()->json(['message' => 'Payment amount is too small (minimum ₱1).'], 422);
+        }
+
+        $facility    = $reservations->first()->facility;
+        $dateCount   = $reservations->count();
+        $description = "CABS Reservation Group - {$facility->name} ({$dateCount} dates)";
+
+        $linkData = $this->payMongo->createPaymentLink($amountCents, $description);
+
+        if (!isset($linkData['data']['id'])) {
+            Log::error('PayMongo createPaymentLink failed (group)', ['response' => $linkData]);
+            $pmError = $linkData['errors'][0]['detail'] ?? 'Unknown PayMongo error.';
+            return response()->json(['message' => "Payment gateway error: {$pmError}", 'details' => $linkData], 502);
+        }
+
+        $link        = $linkData['data'];
+        $checkoutUrl = $link['url'];
+
+        foreach ($payments as $payment) {
+            $payment->update([
+                'paymongo_payment_intent_id' => $link['id'],
+                'paymongo_checkout_url'      => $checkoutUrl,
+                'status'                     => 'pending',
+            ]);
+        }
+
+        return response()->json([
+            'checkout_url' => $checkoutUrl,
+            'link_id'      => $link['id'],
+            'amount'       => $totalAmount,
+            'currency'     => 'PHP',
+        ]);
+    }
+
+    public function handleGroupCallback($groupId)
+    {
+        $reservations = Reservation::with(['payment', 'facility', 'user'])
+            ->where('reservation_group_id', $groupId)
+            ->get();
+
+        if ($reservations->isEmpty()) {
+            return response()->json(['message' => 'Reservation group not found.'], 404);
+        }
+
+        $firstPayment = $reservations->first()->payment;
+
+        if (!$firstPayment || !$firstPayment->paymongo_payment_intent_id) {
+            return response()->json(['message' => 'No payment record found.'], 404);
+        }
+
+        $paymentsData = $this->payMongo->getPaymentLinkPayments($firstPayment->paymongo_payment_intent_id);
+
+        if (!isset($paymentsData['data'])) {
+            return response()->json(['message' => 'Failed to retrieve payment link status.'], 502);
+        }
+
+        $paidEntry = collect($paymentsData['data'])->first(fn ($p) => ($p['status'] ?? '') === 'paid');
+
+        if ($paidEntry) {
+            $mockIntentData = [
+                'attributes' => [
+                    'payments'             => [],
+                    'payment_method_types' => ['paymongo_link'],
+                ],
+            ];
+            foreach ($reservations as $reservation) {
+                if ($reservation->payment->status !== 'paid') {
+                    $this->handleSuccess($reservation->payment, $mockIntentData);
+                }
+            }
+        } else {
+            foreach ($reservations as $reservation) {
+                if ($reservation->payment->status !== 'paid') {
+                    $reservation->payment->update(['status' => 'pending']);
+                }
+            }
+        }
+
+        $fresh = Reservation::with(['facility', 'payment'])->where('reservation_group_id', $groupId)->get();
+
+        return response()->json([
+            'status'       => $fresh->every(fn ($r) => $r->payment->status === 'paid') ? 'paid' : 'pending',
+            'reservations' => $fresh,
+        ]);
+    }
+
     // ─── Step 1: Create payment intent ───────────────────────────────────────
 
     public function initiate(Request $request, $reservationId)

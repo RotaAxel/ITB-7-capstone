@@ -52,18 +52,21 @@ export default function ReservationDetailModal({ reservationId, onClose }) {
       .catch(() => toast.error('Failed to download receipt.'))
   }
 
-  const downloadAuthorizationLetter = () => {
-    api.get(`/reservations/${reservationId}/authorization-letter`, { responseType: 'blob' })
+  // kind is 'authorization' | 'request' — two independent documents (see
+  // Facility::requires_authorization_letter / requires_request_letter) that
+  // share this same download logic.
+  const downloadLetter = (kind) => {
+    api.get(`/reservations/${reservationId}/${kind}-letter`, { responseType: 'blob' })
       .then(res => {
         const ext = { 'application/pdf': 'pdf', 'image/jpeg': 'jpg', 'image/png': 'png' }[res.data.type] || 'bin'
         const url = URL.createObjectURL(res.data)
         const a   = document.createElement('a')
         a.href = url
-        a.download = `authorization-letter-reservation-${reservationId}.${ext}`
+        a.download = `${kind}-letter-reservation-${reservationId}.${ext}`
         a.click()
         URL.revokeObjectURL(url)
       })
-      .catch(() => toast.error('Failed to download the authorization letter.'))
+      .catch(() => toast.error(`Failed to download the ${kind} letter.`))
   }
 
   const r = reservation
@@ -110,8 +113,13 @@ export default function ReservationDetailModal({ reservationId, onClose }) {
         </Button>
       )}
       {r?.authorization_letter_path && (
-        <Button variant="outline" size="sm" onClick={downloadAuthorizationLetter} className="flex items-center gap-1.5">
+        <Button variant="outline" size="sm" onClick={() => downloadLetter('authorization')} className="flex items-center gap-1.5">
           <Download className="h-3.5 w-3.5" /> Your Authorization Letter
+        </Button>
+      )}
+      {r?.request_letter_path && (
+        <Button variant="outline" size="sm" onClick={() => downloadLetter('request')} className="flex items-center gap-1.5">
+          <Download className="h-3.5 w-3.5" /> Your Request Letter
         </Button>
       )}
       {canCancel && (
@@ -161,6 +169,9 @@ export default function ReservationDetailModal({ reservationId, onClose }) {
                     ['Duration',     duration != null ? `${duration}h` : '—'],
                     ['Purpose',      r.purpose],
                     ['Participants', r.number_of_participants],
+                    ...(r.waste_management_plan ? [['Waste Management', r.waste_management_plan]] : []),
+                    ...(r.crowd_management_plan ? [['Crowd Management', r.crowd_management_plan]] : []),
+                    ...(r.event_considerations  ? [['Event Considerations', r.event_considerations]] : []),
                     ['Submitted',    r.created_at ? format(parseISO(r.created_at), 'MMM d, yyyy h:mm a') : '—'],
                   ].map(([label, value]) => (
                     <div key={label} className="flex gap-4 py-2.5">

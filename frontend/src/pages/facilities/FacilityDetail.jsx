@@ -3,7 +3,7 @@ import { useNavigate, useParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import FullCalendar from '@fullcalendar/react'
 import dayGridPlugin from '@fullcalendar/daygrid'
-import { MapPin, Users, Clock, ArrowLeft, Building2 } from 'lucide-react'
+import { MapPin, Users, Clock, ArrowLeft, Building2, FileCheck, ShieldAlert, Backpack, Ban } from 'lucide-react'
 import api from '@/api/axios'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card'
 import Badge from '@/components/ui/Badge'
@@ -24,6 +24,7 @@ function getSportTheme(name = '') {
   if (n.includes('tennis'))                    return { color: '#84CC16', dark: '#4D7C0F', label: 'Tennis Court'      }
   if (n.includes('baseball'))                  return { color: '#78350F', dark: '#451A03', label: 'Baseball Field'   }
   if (n.includes('gym') || n.includes('gymnasium') || n.includes('multi')) return { color: '#6366F1', dark: '#4338CA', label: 'Gymnasium' }
+  if (n.includes('field'))                     return { color: '#2E8B57', dark: '#1F5C3A', label: 'Open Field'      }
   return { color: '#C0392B', dark: '#96281B', label: 'Sports Facility' }
 }
 
@@ -76,7 +77,7 @@ function FacilityHero({ facility, onBack }) {
 export default function FacilityDetail() {
   const { id } = useParams()
   const navigate = useNavigate()
-  const { isClient } = useAuth()
+  const { isClient, user } = useAuth()
   const [showModal, setShowModal] = useState(false)
 
   const { data: facility, isLoading, error } = useQuery({
@@ -130,7 +131,20 @@ export default function FacilityDetail() {
               <div className="flex items-center gap-2 text-sm text-gray-600">
                 <Clock className="h-4 w-4 text-[#1C2833] shrink-0" />
                 ₱{Number(facility.price_per_hour).toLocaleString()} / hour
+                {facility.resident_price_per_hour != null && (
+                  <span className="text-[#1E8449]">
+                    (₱{Number(facility.resident_price_per_hour).toLocaleString()} / hour for verified Cabuyeño residents)
+                  </span>
+                )}
               </div>
+
+              {isClient && facility.resident_price_per_hour != null && (
+                <p className={`text-xs ${user?.residency_status === 'verified' ? 'text-[#1E8449]' : 'text-[#B7950B]'}`}>
+                  {user?.residency_status === 'verified'
+                    ? 'You qualify for the Cabuyeño resident rate — it already applies to your bookings.'
+                    : 'Verify your Cabuyao residency in your profile to unlock the discounted rate.'}
+                </p>
+              )}
 
               {facility.description && (
                 <p className="text-sm text-gray-600 leading-relaxed">{facility.description}</p>
@@ -170,6 +184,70 @@ export default function FacilityDetail() {
                     </li>
                   ))}
                 </ul>
+              </CardContent>
+            </Card>
+          )}
+
+          {(facility.requires_authorization_letter || facility.requires_request_letter || facility.what_to_bring
+            || facility.restrictions || facility.additional_terms || facility.excessive_mess_fee || facility.damage_clearance_fee) && (
+            <Card>
+              <CardHeader><CardTitle>Facility Requirements</CardTitle></CardHeader>
+              <CardContent className="pt-0 space-y-4">
+                {facility.requires_authorization_letter && (
+                  <div className="flex items-start gap-2.5 text-sm">
+                    <FileCheck className="h-4 w-4 text-[#C0392B] shrink-0 mt-0.5" />
+                    <span className="text-gray-700">
+                      A signed authorization letter (PDF or image) must be attached when reserving this facility.
+                    </span>
+                  </div>
+                )}
+                {facility.requires_request_letter && (
+                  <div className="flex items-start gap-2.5 text-sm">
+                    <FileCheck className="h-4 w-4 text-[#2980B9] shrink-0 mt-0.5" />
+                    <span className="text-gray-700">
+                      A formal request letter (PDF or image) addressed to CABS/City Hall must be attached
+                      when reserving this facility.
+                    </span>
+                  </div>
+                )}
+                {facility.what_to_bring && (
+                  <div className="flex items-start gap-2.5 text-sm">
+                    <Backpack className="h-4 w-4 text-[#1C2833] shrink-0 mt-0.5" />
+                    <div>
+                      <p className="font-medium text-[#1C2833]">What to Bring</p>
+                      <p className="text-gray-600 leading-relaxed mt-0.5">{facility.what_to_bring}</p>
+                    </div>
+                  </div>
+                )}
+                {facility.restrictions && (
+                  <div className="flex items-start gap-2.5 text-sm">
+                    <Ban className="h-4 w-4 text-[#1C2833] shrink-0 mt-0.5" />
+                    <div>
+                      <p className="font-medium text-[#1C2833]">Restrictions</p>
+                      <p className="text-gray-600 leading-relaxed mt-0.5">{facility.restrictions}</p>
+                    </div>
+                  </div>
+                )}
+                {facility.additional_terms && (
+                  <div className="flex items-start gap-2.5 text-sm">
+                    <ShieldAlert className="h-4 w-4 text-[#1C2833] shrink-0 mt-0.5" />
+                    <div>
+                      <p className="font-medium text-[#1C2833]">Additional Terms</p>
+                      <p className="text-gray-600 leading-relaxed mt-0.5">{facility.additional_terms}</p>
+                    </div>
+                  </div>
+                )}
+                {(facility.excessive_mess_fee > 0 || facility.damage_clearance_fee > 0) && (
+                  <div className="text-xs text-[#1C2833] bg-[#FEF9E7] border border-[#F9E79F] rounded-lg px-3 py-2.5 space-y-1">
+                    {facility.excessive_mess_fee > 0 && (
+                      <p>Excessive mess fee: <strong>₱{Number(facility.excessive_mess_fee).toLocaleString()}</strong></p>
+                    )}
+                    {facility.damage_clearance_fee > 0 && (
+                      <p>Damage/clearance fee: <strong>₱{Number(facility.damage_clearance_fee).toLocaleString()}</strong></p>
+                    )}
+                    <p className="text-[#B7950B]">Assessed after a post-event inspection if applicable — not charged upfront.</p>
+                  </div>
+                )}
               </CardContent>
             </Card>
           )}

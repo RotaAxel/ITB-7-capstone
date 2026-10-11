@@ -88,6 +88,27 @@ class UserController extends Controller
         return response()->json($user->fresh());
     }
 
+    public function verifyResidency(Request $request, $id)
+    {
+        $user = User::findOrFail($id);
+
+        $validated = $request->validate([
+            'status' => ['required', 'in:verified,rejected'],
+            'note'   => ['nullable', 'string'],
+        ]);
+
+        if (!$user->residency_proof_path) {
+            return response()->json(['message' => 'This user has not submitted a residency proof.'], 422);
+        }
+
+        $user->update([
+            'residency_status'     => $validated['status'],
+            'residency_admin_note' => $validated['note'] ?? null,
+        ]);
+
+        return response()->json($user->fresh());
+    }
+
     public function destroy($id)
     {
         $user = User::findOrFail($id);

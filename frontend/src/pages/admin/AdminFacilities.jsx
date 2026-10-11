@@ -14,13 +14,18 @@ import Modal from '@/components/ui/Modal'
 import SearchAutocomplete from '@/components/ui/SearchAutocomplete'
 
 const BLANK_FACILITY = {
-  name: '', description: '', location: '', capacity: '', price_per_hour: '', status: 'available',
+  name: '', description: '', location: '', capacity: '', price_per_hour: '', resident_price_per_hour: '', status: 'available',
   requires_authorization_letter: false,
+  requires_request_letter: false,
+  what_to_bring: '', restrictions: '', additional_terms: '',
+  excessive_mess_fee: '', damage_clearance_fee: '',
 }
 
 const BLANK_MAINTENANCE = {
   status: 'under_maintenance', maintenance_note: '', maintenance_start: '', maintenance_end: '',
 }
+
+const BLANK_AMENITY = { name: '', description: '', quantity: 1, fee: '', is_available: true }
 
 const FILTERS = [
   { value: 'all',               label: 'All'         },
@@ -40,6 +45,7 @@ function getSportTheme(name = '') {
   if (n.includes('tennis'))                    return { color: '#84CC16', dark: '#4D7C0F', label: 'Tennis Court'      }
   if (n.includes('baseball'))                  return { color: '#78350F', dark: '#451A03', label: 'Baseball Field'   }
   if (n.includes('gym') || n.includes('gymnasium') || n.includes('multi')) return { color: '#6366F1', dark: '#4338CA', label: 'Gymnasium' }
+  if (n.includes('field'))                     return { color: '#2E8B57', dark: '#1F5C3A', label: 'Open Field'      }
   return { color: '#C0392B', dark: '#96281B', label: 'Sports Facility' }
 }
 
@@ -69,6 +75,9 @@ function FacilityRow({ facility, onEdit, onMaint, onDelete }) {
               {facility.requires_authorization_letter && (
                 <FileCheck className="h-3.5 w-3.5 text-[#8E44AD] shrink-0" title="Requires authorization letter" />
               )}
+              {facility.requires_request_letter && (
+                <FileCheck className="h-3.5 w-3.5 text-[#2980B9] shrink-0" title="Requires request letter" />
+              )}
             </p>
             {facility.description && (
               <p className="text-xs text-[#1C2833] truncate max-w-[200px]">{facility.description}</p>
@@ -92,6 +101,11 @@ function FacilityRow({ facility, onEdit, onMaint, onDelete }) {
       </td>
       <td className="px-4 py-3 text-sm font-medium text-[#1C2833] text-center">
         ₱{Number(facility.price_per_hour).toLocaleString()}/hr
+        {facility.resident_price_per_hour != null && (
+          <span className="block text-xs font-normal text-[#1E8449]">
+            ₱{Number(facility.resident_price_per_hour).toLocaleString()}/hr (Cabuyeño)
+          </span>
+        )}
       </td>
       <td className="px-4 py-3 text-center">
         <Badge status={facility.status} />
@@ -192,11 +206,24 @@ export default function AdminFacilities() {
   const [maint,        setMaint]        = useState(BLANK_MAINTENANCE)
   const [imageFile,    setImageFile]    = useState(null)   // File | null
   const [imagePreview, setImagePreview] = useState(null)   // string | null
+  const [amenityForm,  setAmenityForm]  = useState(BLANK_AMENITY)
 
   const { data: facilities = [], isLoading } = useQuery({
     queryKey: ['facilities'],
     queryFn: () => api.get('/facilities').then(r => r.data),
   })
+
+  // The shared /facilities list only returns is_available amenities (clients
+  // don't need to see disabled ones) — when editing a facility, fetch its full
+  // amenity list (available + unavailable) via the single-facility endpoint,
+  // which doesn't filter.
+  const editingFacilityId = facilityModal && facilityModal !== 'create' ? facilityModal.id : null
+  const { data: editingFacilityDetail } = useQuery({
+    queryKey: ['facility', editingFacilityId],
+    queryFn: () => api.get(`/facilities/${editingFacilityId}`).then(r => r.data),
+    enabled: Boolean(editingFacilityId),
+  })
+  const editingAmenities = editingFacilityDetail?.amenities ?? []
 
   const searchSuggestions = useMemo(() => [
     ...facilities.map(f => f.name),
@@ -223,8 +250,15 @@ export default function AdminFacilities() {
     fd.append('location',       form.location)
     fd.append('capacity',       form.capacity)
     fd.append('price_per_hour', form.price_per_hour)
+    fd.append('resident_price_per_hour', form.resident_price_per_hour ?? '')
     fd.append('status',         form.status)
     fd.append('requires_authorization_letter', form.requires_authorization_letter ? 'true' : 'false')
+    fd.append('requires_request_letter', form.requires_request_letter ? 'true' : 'false')
+    fd.append('what_to_bring',        form.what_to_bring ?? '')
+    fd.append('restrictions',         form.restrictions ?? '')
+    fd.append('additional_terms',     form.additional_terms ?? '')
+    fd.append('excessive_mess_fee',   form.excessive_mess_fee ?? '')
+    fd.append('damage_clearance_fee', form.damage_clearance_fee ?? '')
     if (imageFile) fd.append('image', imageFile)
     return fd
   }
@@ -273,6 +307,31 @@ export default function AdminFacilities() {
     onError: err => toast.error(err.response?.data?.message || 'Failed to delete facility.'),
   })
 
+  // Amenity CRUD — plain JSON (no file upload involved), so none of the
+  // multipart-boolean workarounds the facility form needs apply here.
+  const invalidateAmenities = () => {
+    queryClient.invalidateQueries({ queryKey: ['facility', editingFacilityId] })
+    queryClient.invalidateQueries({ queryKey: ['facilities'] })
+  }
+
+  const createAmenityMutation = useMutation({
+    mutationFn: data => api.post('/admin/amenities', { ...data, facility_id: editingFacilityId }),
+    onSuccess: () => { toast.success('Amenity added.'); setAmenityForm(BLANK_AMENITY); invalidateAmenities() },
+    onError: err => toast.error(err.response?.data?.message || 'Failed to add amenity.'),
+  })
+
+  const updateAmenityMutation = useMutation({
+    mutationFn: ({ id, data }) => api.put(`/admin/amenities/${id}`, data),
+    onSuccess: invalidateAmenities,
+    onError: err => toast.error(err.response?.data?.message || 'Failed to update amenity.'),
+  })
+
+  const deleteAmenityMutation = useMutation({
+    mutationFn: id => api.delete(`/admin/amenities/${id}`),
+    onSuccess: () => { toast.success('Amenity removed.'); invalidateAmenities() },
+    onError: err => toast.error(err.response?.data?.message || 'Failed to remove amenity.'),
+  })
+
   const setF = (k, v) => setForm(f  => ({ ...f,  [k]: v }))
   const setM = (k, v) => setMaint(m => ({ ...m, [k]: v }))
 
@@ -286,6 +345,7 @@ export default function AdminFacilities() {
   const openCreate = () => {
     setForm(BLANK_FACILITY)
     resetImage()
+    setAmenityForm(BLANK_AMENITY)
     setFacilityModal('create')
   }
 
@@ -293,6 +353,7 @@ export default function AdminFacilities() {
     setForm({ ...f })
     setImageFile(null)
     setImagePreview(f.image_url || null)
+    setAmenityForm(BLANK_AMENITY)
     setFacilityModal(f)
   }
 
@@ -496,7 +557,7 @@ export default function AdminFacilities() {
         <Modal
           title={facilityModal === 'create' ? 'Add New Facility' : 'Edit Facility'}
           onClose={() => setFacilityModal(null)}
-          size="lg"
+          size="2xl"
           footer={
             <div className="flex justify-end gap-2">
               <Button variant="outline" onClick={() => setFacilityModal(null)}>Cancel</Button>
@@ -571,6 +632,22 @@ export default function AdminFacilities() {
                 />
               </div>
               <div>
+                <Label>Cabuyeño Resident Price per Hour (₱)</Label>
+                <Input
+                  type="number"
+                  min={0}
+                  step={50}
+                  value={form.resident_price_per_hour}
+                  onChange={e => setF('resident_price_per_hour', e.target.value)}
+                  placeholder="Same as above"
+                  className="mt-1"
+                />
+                <p className="text-xs text-[#1C2833] mt-1">
+                  Optional discounted rate for verified Cabuyeño residents. Leave blank to charge
+                  everyone the standard price above.
+                </p>
+              </div>
+              <div>
                 <Label>Status</Label>
                 <select
                   value={form.status}
@@ -599,7 +676,204 @@ export default function AdminFacilities() {
                   </span>
                 </label>
               </div>
+              <div className="sm:col-span-2">
+                <label className="flex items-start gap-2.5 p-3 rounded-lg border border-[#E5E7E9] cursor-pointer hover:bg-gray-50 transition-colors">
+                  <input
+                    type="checkbox"
+                    checked={form.requires_request_letter}
+                    onChange={e => setF('requires_request_letter', e.target.checked)}
+                    className="mt-0.5 h-4 w-4 rounded border-[#E5E7E9] text-[#C0392B] shrink-0"
+                  />
+                  <span>
+                    <span className="block text-sm font-medium text-[#1C2833]">Requires Request Letter</span>
+                    <span className="block text-xs text-[#1C2833] mt-0.5">
+                      Clients must upload a formal request letter (PDF or image) addressed to CABS/City Hall
+                      when reserving this facility — distinct from an authorization letter, which is only
+                      needed when the requester isn't the actual event organizer.
+                    </span>
+                  </span>
+                </label>
+              </div>
             </div>
+
+            {/* Facility-specific terms — merged into the Terms & Conditions a client
+                agrees to when booking this facility, and shown on its public detail
+                page, alongside the system-wide generic terms. All optional: a
+                facility with none of these set just falls back to the generic terms
+                with no facility-specific section. */}
+            <div className="pt-4 border-t border-[#E5E7E9]">
+              <p className="text-sm font-semibold text-[#1C2833] mb-0.5">Facility-Specific Terms</p>
+              <p className="text-xs text-[#1C2833] mb-3">
+                Shown to clients on this facility's page and merged into the Terms &amp; Conditions
+                they agree to when reserving it. Leave blank to use only the generic system-wide terms.
+              </p>
+
+              <div className="space-y-4">
+                <div>
+                  <Label>What to Bring</Label>
+                  <textarea
+                    rows={2}
+                    value={form.what_to_bring}
+                    onChange={e => setF('what_to_bring', e.target.value)}
+                    placeholder="e.g. Swimwear, a towel, and a valid ID."
+                    className="mt-1 w-full rounded-lg border border-[#E5E7E9] px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#FADBD8] focus:border-[#C0392B] resize-none"
+                  />
+                </div>
+                <div>
+                  <Label>Restrictions</Label>
+                  <textarea
+                    rows={2}
+                    value={form.restrictions}
+                    onChange={e => setF('restrictions', e.target.value)}
+                    placeholder="e.g. No food, drinks, or pets allowed on the court."
+                    className="mt-1 w-full rounded-lg border border-[#E5E7E9] px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#FADBD8] focus:border-[#C0392B] resize-none"
+                  />
+                </div>
+                <div>
+                  <Label>Additional Terms</Label>
+                  <textarea
+                    rows={2}
+                    value={form.additional_terms}
+                    onChange={e => setF('additional_terms', e.target.value)}
+                    placeholder="Any other facility-specific rules not covered above."
+                    className="mt-1 w-full rounded-lg border border-[#E5E7E9] px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#FADBD8] focus:border-[#C0392B] resize-none"
+                  />
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div>
+                    <Label>Excessive Mess Fee (₱)</Label>
+                    <Input
+                      type="number"
+                      min={0}
+                      step={50}
+                      value={form.excessive_mess_fee}
+                      onChange={e => setF('excessive_mess_fee', e.target.value)}
+                      placeholder="0"
+                      className="mt-1"
+                    />
+                    <p className="text-xs text-[#1C2833] mt-1">
+                      Disclosed to clients, not auto-charged — assessed after a post-event inspection.
+                    </p>
+                  </div>
+                  <div>
+                    <Label>Damage / Clearance Fee (₱)</Label>
+                    <Input
+                      type="number"
+                      min={0}
+                      step={50}
+                      value={form.damage_clearance_fee}
+                      onChange={e => setF('damage_clearance_fee', e.target.value)}
+                      placeholder="0"
+                      className="mt-1"
+                    />
+                    <p className="text-xs text-[#1C2833] mt-1">
+                      Disclosed to clients, not auto-charged — assessed after a post-event inspection.
+                    </p>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Amenities — only once the facility actually exists (create mode has
+                no facility_id yet to attach one to). Name/Quantity/Fee save on blur
+                rather than per keystroke; Available toggles immediately. */}
+            {editingFacilityId && (
+              <div className="pt-4 border-t border-[#E5E7E9]">
+                <p className="text-sm font-semibold text-[#1C2833] mb-0.5">Amenities</p>
+                <p className="text-xs text-[#1C2833] mb-3">
+                  Optional equipment/materials clients can select when reserving this facility. Fee is
+                  a flat additional charge added to the reservation if selected — leave at 0 for items
+                  that are just part of using the facility.
+                </p>
+
+                <div className="space-y-2">
+                  {editingAmenities.map(a => (
+                    <div key={a.id} className="flex items-center gap-2 p-2.5 rounded-lg border border-[#E5E7E9]">
+                      <div className="flex-1 grid grid-cols-2 sm:grid-cols-4 gap-2">
+                        <Input
+                          defaultValue={a.name}
+                          onBlur={e => e.target.value !== a.name && updateAmenityMutation.mutate({ id: a.id, data: { name: e.target.value } })}
+                          placeholder="Name"
+                          className="text-sm"
+                        />
+                        <Input
+                          type="number" min={1}
+                          defaultValue={a.quantity}
+                          onBlur={e => Number(e.target.value) !== a.quantity && updateAmenityMutation.mutate({ id: a.id, data: { quantity: e.target.value } })}
+                          placeholder="Qty"
+                          className="text-sm"
+                        />
+                        <Input
+                          type="number" min={0} step={10}
+                          defaultValue={a.fee}
+                          onBlur={e => Number(e.target.value) !== Number(a.fee) && updateAmenityMutation.mutate({ id: a.id, data: { fee: e.target.value } })}
+                          placeholder="Fee (₱)"
+                          className="text-sm"
+                        />
+                        <label className="flex items-center gap-1.5 text-xs text-[#1C2833]">
+                          <input
+                            type="checkbox"
+                            checked={a.is_available}
+                            onChange={e => updateAmenityMutation.mutate({ id: a.id, data: { is_available: e.target.checked } })}
+                            className="h-3.5 w-3.5 rounded border-[#E5E7E9] text-[#C0392B]"
+                          />
+                          Available
+                        </label>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => { if (window.confirm(`Remove "${a.name}"?`)) deleteAmenityMutation.mutate(a.id) }}
+                        className="p-1.5 rounded text-[#C0392B] hover:bg-[#FADBD8]/40 shrink-0"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </button>
+                    </div>
+                  ))}
+                  {editingAmenities.length === 0 && (
+                    <p className="text-xs text-[#1C2833] italic">No amenities yet.</p>
+                  )}
+                </div>
+
+                <div className="mt-3 p-2.5 rounded-lg border border-dashed border-[#E5E7E9]">
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                    <Input
+                      value={amenityForm.name}
+                      onChange={e => setAmenityForm(f => ({ ...f, name: e.target.value }))}
+                      placeholder="New amenity name"
+                      className="text-sm"
+                    />
+                    <Input
+                      type="number" min={1}
+                      value={amenityForm.quantity}
+                      onChange={e => setAmenityForm(f => ({ ...f, quantity: e.target.value }))}
+                      placeholder="Qty"
+                      className="text-sm"
+                    />
+                    <Input
+                      type="number" min={0} step={10}
+                      value={amenityForm.fee}
+                      onChange={e => setAmenityForm(f => ({ ...f, fee: e.target.value }))}
+                      placeholder="Fee (₱)"
+                      className="text-sm"
+                    />
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      disabled={!amenityForm.name.trim() || createAmenityMutation.isPending}
+                      loading={createAmenityMutation.isPending}
+                      onClick={() => createAmenityMutation.mutate({
+                        name: amenityForm.name,
+                        quantity: Number(amenityForm.quantity) || 1,
+                        fee: amenityForm.fee || 0,
+                      })}
+                    >
+                      <Plus className="h-3.5 w-3.5" /> Add
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         </Modal>
       )}

@@ -9,6 +9,7 @@ use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Facades\Password;
+use Illuminate\Support\Facades\Storage;
 use Illuminate\Validation\Rules\Password as PasswordRule;
 
 class AuthController extends Controller
@@ -234,6 +235,61 @@ class AuthController extends Controller
         $user->update($validated);
 
         return response()->json($user);
+    }
+
+    // Proof of Cabuyao residency (barangay certificate / valid ID) — uploading it
+    // doesn't grant the resident discount by itself; an admin has to review it and
+    // mark the account verified (see UserController::verifyResidency).
+    public function uploadResidencyProof(Request $request)
+    {
+        $request->validate([
+            'residency_proof' => ['required', 'file', 'mimes:pdf,jpg,jpeg,png', 'max:5120'],
+        ]);
+
+        $user = $request->user();
+
+        // Don't leave the previous file orphaned on disk when replacing it.
+        if ($user->residency_proof_path) {
+            Storage::disk('local')->delete($user->residency_proof_path);
+        }
+
+        $path = $request->file('residency_proof')->store('residency-proofs', 'local');
+
+        $user->update([
+            'residency_proof_path' => $path,
+            // A fresh upload always resets to 'pending' review — a prior verified
+            // or rejected decision doesn't carry over to a new document, and any
+            // admin note from a previous rejection no longer applies.
+            'residency_status'     => 'pending',
+            'residency_admin_note' => null,
+        ]);
+
+        return response()->json($user->fresh());
+    }
+
+    public function downloadResidencyProof(Request $request, $id)
+    {
+        $requester = $request->user();
+        $target    = User::findOrFail($id);
+
+        if ($requester->isClient() && $requester->id !== $target->id) {
+            return response()->json(['message' => 'Forbidden.'], 403);
+        }
+
+        if (!$target->residency_proof_path) {
+            return response()->json(['message' => 'No residency proof was submitted.'], 404);
+        }
+
+        if (!Storage::disk('local')->exists($target->residency_proof_path)) {
+            return response()->json(['message' => 'The residency proof file is missing.'], 404);
+        }
+
+        $extension = pathinfo($target->residency_proof_path, PATHINFO_EXTENSION);
+
+        return Storage::disk('local')->download(
+            $target->residency_proof_path,
+            "residency-proof-user-{$target->id}.{$extension}"
+        );
     }
 
     public function changePassword(Request $request)

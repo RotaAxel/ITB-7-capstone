@@ -54,6 +54,17 @@ function ReceiptBody({ reservation: r }) {
     ? (new Date(`2000-01-01T${r.end_time}`) - new Date(`2000-01-01T${r.start_time}`)) / 3_600_000
     : null
 
+  // r.facility.amenities is the facility's full amenity list (not just what was
+  // selected) — narrow it down to the ones actually chosen on this reservation,
+  // so the fee each one added can be itemized against the total paid.
+  const selectedAmenities = (r.facility?.amenities ?? [])
+    .filter(a => (r.selected_amenities ?? []).includes(a.id))
+  const amenitiesFee = selectedAmenities.reduce((sum, a) => sum + Number(a.fee ?? 0), 0)
+  const facilitySubtotal = r.payment ? Number(r.payment.amount) - amenitiesFee : 0
+  // Purely a display label — the discount (if any) is already baked into
+  // r.payment.amount from the moment the reservation was created.
+  const residentRateApplied = r.user?.residency_status === 'verified' && r.facility?.resident_price_per_hour != null
+
   return (
     <Card className="overflow-hidden">
       {/* Header band */}
@@ -102,6 +113,25 @@ function ReceiptBody({ reservation: r }) {
           </dl>
         </section>
 
+        {selectedAmenities.length > 0 && (
+          <>
+            <div className="border-t border-gray-100" />
+            <section>
+              <h3 className="text-xs font-semibold uppercase tracking-wide text-[#1C2833] mb-3">Amenities / Materials</h3>
+              <ul className="space-y-1.5 text-sm">
+                {selectedAmenities.map(a => (
+                  <li key={a.id} className="flex justify-between">
+                    <span className="text-gray-700">{a.name}</span>
+                    <span className="text-gray-900 font-medium">
+                      {Number(a.fee) > 0 ? `+₱${Number(a.fee).toLocaleString()}` : 'Included'}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          </>
+        )}
+
         <div className="border-t border-gray-100" />
 
         {/* Payment */}
@@ -122,15 +152,65 @@ function ReceiptBody({ reservation: r }) {
               ))}
             </dl>
 
-            <div className="mt-5 pt-4 border-t border-gray-200 flex justify-between items-center">
-              <span className="font-semibold text-gray-900 text-sm">Total Amount Paid</span>
-              <span className="text-2xl font-bold text-[#C0392B]">
-                ₱{Number(r.payment.amount).toLocaleString()}
-              </span>
+            <div className="mt-5 pt-4 border-t border-gray-200 space-y-1.5">
+              <div className="flex justify-between text-sm">
+                <span className="text-[#1C2833]">Facility Rental{residentRateApplied ? ' (Cabuyeño rate)' : ''}</span>
+                <span className="text-gray-900">₱{facilitySubtotal.toLocaleString()}</span>
+              </div>
+              {amenitiesFee > 0 && (
+                <div className="flex justify-between text-sm">
+                  <span className="text-[#1C2833]">Amenities / Materials</span>
+                  <span className="text-gray-900">₱{amenitiesFee.toLocaleString()}</span>
+                </div>
+              )}
+              <div className="flex justify-between items-center pt-1.5">
+                <span className="font-semibold text-gray-900 text-sm">Total Amount Paid</span>
+                <span className="text-2xl font-bold text-[#C0392B]">
+                  ₱{Number(r.payment.amount).toLocaleString()}
+                </span>
+              </div>
             </div>
           </section>
         )}
+
+        <div className="border-t border-gray-100" />
+        <ReceiptTerms facility={r.facility} />
       </CardContent>
     </Card>
+  )
+}
+
+// Condensed terms — the full numbered clauses shown and agreed to at booking
+// time are a whole separate page (see TermsPage.jsx); this is the essential
+// summary plus this facility's own restrictions/fees, kept short enough to sit
+// at the bottom of a receipt instead of repeating that whole document.
+function ReceiptTerms({ facility }) {
+  const messFee   = Number(facility?.excessive_mess_fee ?? 0)
+  const damageFee = Number(facility?.damage_clearance_fee ?? 0)
+
+  return (
+    <section>
+      <h3 className="text-xs font-semibold uppercase tracking-wide text-[#1C2833] mb-2">Terms &amp; Conditions</h3>
+      <p className="text-xs text-[#1C2833] leading-relaxed">
+        No refunds once payment has been made. CABS / Cabuyao City Hall may cancel any reservation
+        for maintenance, emergencies, or public need, with a full refund in that case. Users are
+        liable for any damage caused to the facility or equipment.
+      </p>
+      {facility?.restrictions && (
+        <p className="text-xs text-[#1C2833] leading-relaxed mt-2">
+          <span className="font-medium">Restrictions:</span> {facility.restrictions}
+        </p>
+      )}
+      {(messFee > 0 || damageFee > 0) && (
+        <p className="text-xs text-[#1C2833] leading-relaxed mt-2">
+          {messFee > 0 && <>Excessive mess fee: ₱{messFee.toLocaleString()}. </>}
+          {damageFee > 0 && <>Damage/clearance fee: ₱{damageFee.toLocaleString()}. </>}
+          (Assessed after inspection, not charged upfront.)
+        </p>
+      )}
+      <p className="text-xs text-[#1C2833]/60 mt-2">
+        Full Terms &amp; Conditions were presented and agreed to at the time of booking.
+      </p>
+    </section>
   )
 }

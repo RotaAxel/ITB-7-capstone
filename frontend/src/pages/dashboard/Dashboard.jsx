@@ -25,6 +25,7 @@ function getSportTheme(name = '') {
   if (n.includes('tennis'))                    return { color: '#84CC16', dark: '#4D7C0F' }
   if (n.includes('baseball'))                  return { color: '#78350F', dark: '#451A03' }
   if (n.includes('gym') || n.includes('gymnasium') || n.includes('multi')) return { color: '#6366F1', dark: '#4338CA' }
+  if (n.includes('field'))                     return { color: '#2E8B57', dark: '#1F5C3A' }
   return { color: '#C0392B', dark: '#96281B' }
 }
 
@@ -116,7 +117,12 @@ export default function Dashboard() {
                   </div>
                   <div className="p-4">
                     <p className="font-semibold text-base text-[#1C2833] truncate">{f.name}</p>
-                    <p className="text-sm text-[#1C2833] mt-1">₱{Number(f.price_per_hour).toLocaleString()}/hr</p>
+                    <p className="text-sm text-[#1C2833] mt-1">
+                      ₱{Number(f.price_per_hour).toLocaleString()}/hr
+                      {f.resident_price_per_hour != null && (
+                        <span className="text-[#1E8449]"> (₱{Number(f.resident_price_per_hour).toLocaleString()} Cabuyeño)</span>
+                      )}
+                    </p>
                     <Button size="lg" className="w-full mt-3 !text-base !py-3 font-bold" onClick={() => openModal(f.id)}>Reserve</Button>
                   </div>
                 </div>

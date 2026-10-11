@@ -25,6 +25,7 @@ const FacilityDetail    = lazy(() => import('@/pages/facilities/FacilityDetail')
 const MyReservations    = lazy(() => import('@/pages/reservations/MyReservations'))
 const NewReservation    = lazy(() => import('@/pages/reservations/NewReservation'))
 const ReservationDetail = lazy(() => import('@/pages/reservations/ReservationDetail'))
+const ReservationGroupDetail = lazy(() => import('@/pages/reservations/ReservationGroupDetail'))
 const TermsPage         = lazy(() => import('@/pages/reservations/TermsPage'))
 const PaymentPage       = lazy(() => import('@/pages/payment/PaymentPage'))
 const PaymentCallback   = lazy(() => import('@/pages/payment/PaymentCallback'))
@@ -115,6 +116,7 @@ export default function App() {
                     <Route path="facilities"               element={<FacilityList />} />
                     <Route path="reservations"             element={<MyReservations />} />
                     <Route path="reservations/new"         element={<NewReservation />} />
+                    <Route path="reservations/group/:groupId" element={<ReservationGroupDetail />} />
                     <Route path="reservations/:id"         element={<ReservationDetail />} />
                     <Route path="reservations/:id/terms"   element={<TermsPage />} />
                     <Route path="reservations/:id/payment" element={<PaymentPage />} />

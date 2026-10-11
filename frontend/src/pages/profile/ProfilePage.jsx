@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useMutation } from '@tanstack/react-query'
 import { toast } from 'sonner'
-import { User, Lock, Save, ArrowLeft } from 'lucide-react'
+import { User, Lock, Save, ArrowLeft, MapPin, Upload, FileCheck, Clock, CheckCircle2, XCircle } from 'lucide-react'
 import api from '@/api/axios'
 import { useAuth } from '@/hooks/useAuth'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card'
@@ -11,9 +11,18 @@ import Input from '@/components/ui/Input'
 import Label from '@/components/ui/Label'
 import Badge from '@/components/ui/Badge'
 
+// Mirrors User::residency_status on the backend.
+const RESIDENCY_META = {
+  unverified: { label: 'Not Submitted', icon: MapPin,       cls: 'bg-gray-50 text-gray-600 border-gray-200' },
+  pending:    { label: 'Pending Review', icon: Clock,        cls: 'bg-[#FEF9E7] text-[#B7950B] border-[#F9E79F]' },
+  verified:   { label: 'Verified Cabuyeño', icon: CheckCircle2, cls: 'bg-[#EAFAF1] text-[#1E8449] border-[#A9DFBF]' },
+  rejected:   { label: 'Rejected',       icon: XCircle,       cls: 'bg-[#FADBD8] text-[#C0392B] border-[#F1948A]' },
+}
+
 export default function ProfilePage() {
-  const { user, refreshUser } = useAuth()
+  const { user, refreshUser, isClient } = useAuth()
   const navigate = useNavigate()
+  const [residencyFile, setResidencyFile] = useState(null)
 
   const [profile, setProfile] = useState({
     full_name:      user?.full_name      ?? '',
@@ -53,6 +62,34 @@ export default function ProfilePage() {
     },
     onError: err => toast.error(err.response?.data?.message || 'Failed to change password.'),
   })
+
+  const residencyMutation = useMutation({
+    mutationFn: file => {
+      const fd = new FormData()
+      fd.append('residency_proof', file)
+      return api.post('/auth/residency-proof', fd)
+    },
+    onSuccess: async () => {
+      await refreshUser()
+      setResidencyFile(null)
+      toast.success('Residency proof submitted — an admin will review it.')
+    },
+    onError: err => toast.error(err.response?.data?.message || 'Failed to submit residency proof.'),
+  })
+
+  const downloadResidencyProof = () => {
+    api.get(`/users/${user.id}/residency-proof`, { responseType: 'blob' })
+      .then(res => {
+        const ext = { 'application/pdf': 'pdf', 'image/jpeg': 'jpg', 'image/png': 'png' }[res.data.type] || 'bin'
+        const url = URL.createObjectURL(res.data)
+        const a   = document.createElement('a')
+        a.href = url
+        a.download = `residency-proof-user-${user.id}.${ext}`
+        a.click()
+        URL.revokeObjectURL(url)
+      })
+      .catch(() => toast.error('Failed to download your residency proof.'))
+  }
 
   const handleProfileSave = () => {
     profileMutation.mutate({
@@ -181,6 +218,76 @@ export default function ProfilePage() {
           </div>
         </CardContent>
       </Card>
+
+      {/* Residency Verification — Cabuyeño residents get a discounted rate on
+          facilities that have one configured (see Facility::resident_price_per_hour).
+          Uploading proof doesn't grant it by itself; an admin has to review and
+          verify it first. Client accounts only — staff/admin don't book facilities. */}
+      {isClient && (() => {
+        const status = user?.residency_status || 'unverified'
+        const meta = RESIDENCY_META[status]
+        const Icon = meta.icon
+        return (
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <MapPin className="h-4 w-4 text-[#1C2833]" /> Residency Verification
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <p className="text-sm text-[#1C2833]">
+                Upload a barangay certificate or valid ID showing a Cabuyao address to qualify for the
+                discounted Cabuyeño rate on facilities that offer one. An admin reviews it before it
+                takes effect.
+              </p>
+
+              <div className={`flex items-center justify-between gap-3 p-3 rounded-lg border text-sm font-medium ${meta.cls}`}>
+                <span className="flex items-center gap-2">
+                  <Icon className="h-4 w-4 shrink-0" /> {meta.label}
+                </span>
+                {user?.residency_proof_path && (
+                  <Button size="sm" variant="outline" onClick={downloadResidencyProof}>
+                    View Submitted File
+                  </Button>
+                )}
+              </div>
+
+              {status === 'rejected' && user?.residency_admin_note && (
+                <p className="text-xs text-[#C0392B]">Reason: {user.residency_admin_note}</p>
+              )}
+
+              {residencyFile ? (
+                <div className="flex items-center justify-between gap-2 p-2.5 rounded-lg border border-[#A9DFBF] bg-[#EAFAF1]">
+                  <span className="flex items-center gap-2 min-w-0 text-sm text-[#1E8449]">
+                    <FileCheck className="h-4 w-4 shrink-0" />
+                    <span className="truncate">{residencyFile.name}</span>
+                  </span>
+                  <Button
+                    size="sm"
+                    loading={residencyMutation.isPending}
+                    onClick={() => residencyMutation.mutate(residencyFile)}
+                  >
+                    Submit
+                  </Button>
+                </div>
+              ) : (
+                <label className="flex flex-col items-center justify-center gap-1.5 py-5 rounded-lg border-2 border-dashed border-[#E5E7E9] cursor-pointer hover:bg-gray-50 transition-colors">
+                  <Upload className="h-5 w-5 text-[#1C2833]" />
+                  <span className="text-sm text-[#1C2833]">
+                    {user?.residency_proof_path ? 'Click to upload a replacement — PDF, JPG, or PNG (max 5MB)' : 'Click to upload — PDF, JPG, or PNG (max 5MB)'}
+                  </span>
+                  <input
+                    type="file"
+                    accept=".pdf,.jpg,.jpeg,.png"
+                    className="hidden"
+                    onChange={e => { const file = e.target.files[0]; if (file) setResidencyFile(file) }}
+                  />
+                </label>
+              )}
+            </CardContent>
+          </Card>
+        )
+      })()}
 
       {/* Password */}
       <Card>

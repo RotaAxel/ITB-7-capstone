@@ -9,10 +9,18 @@ import Button from '@/components/ui/Button'
 import Spinner from '@/components/ui/Spinner'
 import Input from '@/components/ui/Input'
 import Label from '@/components/ui/Label'
+import Alert from '@/components/ui/Alert'
 import PaymentModal from '@/components/PaymentModal'
 import ReceiptModal from '@/components/ReceiptModal'
+import { useAuth } from '@/hooks/useAuth'
 
 const STEPS = ['Schedule', 'Details', 'Terms', 'Review']
+
+// Mirrors ReservationController::LARGE_EVENT_THRESHOLD — at or above this many
+// participants, a reservation is treated as a "large event" and must include a
+// waste management plan, a crowd management plan, and pre-/post-event
+// considerations. Below it, those fields aren't even shown.
+const LARGE_EVENT_THRESHOLD = 50
 
 const termsFor = type => [
   {
@@ -43,7 +51,54 @@ const termsFor = type => [
     heading: '6. Compliance',
     body: 'All users must comply with CABS rules and regulations. Non-compliance may result in immediate termination of the reservation without refund and may affect future booking privileges.',
   },
+  {
+    heading: '7. City Hall Authority',
+    body: 'CABS facilities are government property. The Cabuyao City Hall / local government may cancel or pre-empt any reservation at any time — for public events, emergencies, maintenance, or other administrative directives — even after approval or payment. Affected clients will be notified as soon as possible and are entitled to a full refund for any reservation cancelled on this basis.',
+  },
 ]
+
+// Appended after the generic clauses above, only for whichever fields the
+// facility actually has set — unnumbered and clearly labeled "Facility-
+// Specific" so it reads as this facility's own rules layered on top of the
+// system-wide terms, not a continuation of the numbered list (which would
+// otherwise have to renumber itself depending on which fields are present).
+const facilityTermsFor = facility => {
+  if (!facility) return []
+  const sections = []
+  if (facility.requires_authorization_letter) {
+    sections.push({
+      heading: 'Facility-Specific: Authorization Letter',
+      body: `A signed authorization letter (PDF or image) must be attached when reserving ${facility.name}.`,
+    })
+  }
+  if (facility.requires_request_letter) {
+    sections.push({
+      heading: 'Facility-Specific: Request Letter',
+      body: `A formal request letter (PDF or image) addressed to CABS/City Hall must be attached when reserving ${facility.name}.`,
+    })
+  }
+  if (facility.what_to_bring) {
+    sections.push({ heading: 'Facility-Specific: What to Bring', body: facility.what_to_bring })
+  }
+  if (facility.restrictions) {
+    sections.push({ heading: 'Facility-Specific: Restrictions', body: facility.restrictions })
+  }
+  if (facility.additional_terms) {
+    sections.push({ heading: 'Facility-Specific: Additional Terms', body: facility.additional_terms })
+  }
+  const messFee   = Number(facility.excessive_mess_fee ?? 0)
+  const damageFee = Number(facility.damage_clearance_fee ?? 0)
+  if (messFee > 0 || damageFee > 0) {
+    const parts = []
+    if (messFee > 0)   parts.push(`an excessive mess fee of ₱${messFee.toLocaleString()}`)
+    if (damageFee > 0) parts.push(`a damage/clearance fee of ₱${damageFee.toLocaleString()}`)
+    sections.push({
+      heading: 'Facility-Specific: Cleanliness & Damage Fees',
+      body: `Following a post-event inspection, ${parts.join(' and/or ')} may be charged if applicable. This is not collected upfront and only applies if the facility is left excessively messy or damaged.`,
+    })
+  }
+  return sections
+}
 
 const fmt12 = t => {
   const [h, m] = t.split(':').map(Number)
@@ -53,6 +108,7 @@ const fmt12 = t => {
 
 export default function NewReservationModal({ onClose, preselectedFacility = '' }) {
   const queryClient = useQueryClient()
+  const { user } = useAuth()
 
   const [step, setStep] = useState(0)
   const [form, setForm] = useState({
@@ -64,9 +120,13 @@ export default function NewReservationModal({ onClose, preselectedFacility = '' 
     purpose:                '',
     number_of_participants: '',
     selected_amenities:     [],
+    waste_management_plan:  '',
+    crowd_management_plan:  '',
+    event_considerations:   '',
   })
   const [errors,  setErrors]  = useState({})
   const [letterFile, setLetterFile] = useState(null)
+  const [requestLetterFile, setRequestLetterFile] = useState(null)
   const [agreed,  setAgreed]  = useState(false)
   const [createdId,   setCreatedId]   = useState(null)
   const [showReceipt, setShowReceipt] = useState(false)
@@ -102,7 +162,7 @@ export default function NewReservationModal({ onClose, preselectedFacility = '' 
   // picker itself just stops offering "Book" for these facilities), so a stale
   // "book" left in state from before a letter-requiring facility was selected
   // can never leak into the submitted request, the terms shown, or the summary.
-  const letterRequired = Boolean(facilityDetail?.requires_authorization_letter)
+  const letterRequired = Boolean(facilityDetail?.requires_authorization_letter || facilityDetail?.requires_request_letter)
   const effectiveType  = letterRequired ? 'reserve' : form.type
 
   const mutation = useMutation({
@@ -149,6 +209,8 @@ export default function NewReservationModal({ onClose, preselectedFacility = '' 
       errs.start_time = 'This time slot conflicts with an existing booking.'
     if (facilityDetail?.requires_authorization_letter && !letterFile)
       errs.authorization_letter = `${facilityDetail.name} requires an authorization letter to be attached.`
+    if (facilityDetail?.requires_request_letter && !requestLetterFile)
+      errs.request_letter = `${facilityDetail.name} requires a request letter to be attached.`
     setErrors(errs)
     return Object.keys(errs).length === 0
   }
@@ -160,6 +222,11 @@ export default function NewReservationModal({ onClose, preselectedFacility = '' 
     if (!form.number_of_participants || n < 1) errs.number_of_participants = 'Participants must be at least 1.'
     if (facilityDetail?.capacity && n > facilityDetail.capacity)
       errs.number_of_participants = `Exceeds facility capacity of ${facilityDetail.capacity}.`
+    if (n >= LARGE_EVENT_THRESHOLD) {
+      if (!form.waste_management_plan.trim()) errs.waste_management_plan = 'Required for events of this size.'
+      if (!form.crowd_management_plan.trim()) errs.crowd_management_plan = 'Required for events of this size.'
+      if (!form.event_considerations.trim())  errs.event_considerations  = 'Required for events of this size.'
+    }
     setErrors(errs)
     return Object.keys(errs).length === 0
   }
@@ -182,18 +249,22 @@ export default function NewReservationModal({ onClose, preselectedFacility = '' 
   const submit = () => {
     // Only switch to multipart when there's a file to send — keeps the plain-JSON
     // path (and every facility that doesn't need a letter) untouched.
-    if (letterFile) {
+    if (letterFile || requestLetterFile) {
       const fd = new FormData()
       fd.append('facility_id',            form.facility_id)
       fd.append('reservation_date',       form.reservation_date)
       fd.append('start_time',             form.start_time)
       fd.append('end_time',               form.end_time)
       fd.append('purpose',                form.purpose)
+      fd.append('waste_management_plan',  form.waste_management_plan)
+      fd.append('crowd_management_plan',  form.crowd_management_plan)
+      fd.append('event_considerations',   form.event_considerations)
       fd.append('number_of_participants', form.number_of_participants)
       form.selected_amenities.forEach(id => fd.append('selected_amenities[]', id))
       fd.append('terms_acknowledged', 'true')
       fd.append('type',                effectiveType)
-      fd.append('authorization_letter', letterFile)
+      if (letterFile)        fd.append('authorization_letter', letterFile)
+      if (requestLetterFile) fd.append('request_letter',        requestLetterFile)
       mutation.mutate(fd)
       return
     }
@@ -204,6 +275,9 @@ export default function NewReservationModal({ onClose, preselectedFacility = '' 
       start_time:             form.start_time,
       end_time:               form.end_time,
       purpose:                form.purpose,
+      waste_management_plan:  form.waste_management_plan || null,
+      crowd_management_plan:  form.crowd_management_plan || null,
+      event_considerations:   form.event_considerations || null,
       number_of_participants: Number(form.number_of_participants),
       selected_amenities:     form.selected_amenities,
       terms_acknowledged:     true,
@@ -217,8 +291,26 @@ export default function NewReservationModal({ onClose, preselectedFacility = '' 
     ? (new Date(`2000-01-01T${form.end_time}`) - new Date(`2000-01-01T${form.start_time}`)) / 3_600_000
     : 0
 
+  // Each selected amenity ("material") can carry its own flat additional fee —
+  // summed once per selection, not multiplied by its stock quantity. Mirrors the
+  // authoritative calculation in ReservationController::store(); this is only an
+  // estimate for display, so it staying in sync just keeps the preview honest.
+  const amenitiesFee = activeFacility?.amenities
+    ?.filter(a => form.selected_amenities.includes(a.id))
+    .reduce((sum, a) => sum + Number(a.fee ?? 0), 0) ?? 0
+
+  // Mirrors Facility::rateFor() on the backend — a verified Cabuyeño resident
+  // pays resident_price_per_hour when the facility has one set, everyone else
+  // pays the standard price_per_hour. Only an estimate for display; the server
+  // always re-derives the real charge from the user's own verification status.
+  const hourlyRate = activeFacility
+    ? (user?.residency_status === 'verified' && activeFacility.resident_price_per_hour != null
+        ? Number(activeFacility.resident_price_per_hour)
+        : Number(activeFacility.price_per_hour))
+    : 0
+
   const estimatedCost = durationHours > 0 && activeFacility
-    ? durationHours * Number(activeFacility.price_per_hour)
+    ? durationHours * hourlyRate + amenitiesFee
     : 0
 
   // Reservation created. "Book" hands off straight to payment. "Reserve" must
@@ -418,6 +510,44 @@ export default function NewReservationModal({ onClose, preselectedFacility = '' 
               </div>
             )}
 
+            {facilityDetail?.requires_request_letter && (
+              <div>
+                <Label>Request Letter *</Label>
+                <p className="text-xs text-[#1C2833] mt-0.5 mb-1.5">
+                  {facilityDetail.name} requires a formal request letter (PDF or image) addressed to CABS/City Hall
+                  to be attached to this request.
+                </p>
+                {requestLetterFile ? (
+                  <div className="flex items-center justify-between gap-2 p-2.5 rounded-lg border border-[#A9DFBF] bg-[#EAFAF1]">
+                    <span className="flex items-center gap-2 min-w-0 text-sm text-[#1E8449]">
+                      <FileCheck className="h-4 w-4 shrink-0" />
+                      <span className="truncate">{requestLetterFile.name}</span>
+                    </span>
+                    <button type="button" onClick={() => setRequestLetterFile(null)} className="p-1 rounded text-[#1E8449] hover:bg-[#D5F5E3] shrink-0">
+                      <X className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                ) : (
+                  <label className={`flex flex-col items-center justify-center gap-1.5 py-5 rounded-lg border-2 border-dashed cursor-pointer transition-colors ${
+                    errors.request_letter ? 'border-[#C0392B] bg-[#FADBD8]/10' : 'border-[#E5E7E9] hover:bg-gray-50'
+                  }`}>
+                    <Upload className="h-5 w-5 text-[#1C2833]" />
+                    <span className="text-sm text-[#1C2833]">Click to upload — PDF, JPG, or PNG (max 5MB)</span>
+                    <input
+                      type="file"
+                      accept=".pdf,.jpg,.jpeg,.png"
+                      className="hidden"
+                      onChange={e => {
+                        const file = e.target.files[0]
+                        if (file) { setRequestLetterFile(file); setErrors(er => ({ ...er, request_letter: '' })) }
+                      }}
+                    />
+                  </label>
+                )}
+                {errors.request_letter && <p className="text-red-500 text-xs mt-1">{errors.request_letter}</p>}
+              </div>
+            )}
+
             <div>
               <Label>Date *</Label>
               <Input type="date" min={today} value={form.reservation_date}
@@ -519,9 +649,64 @@ export default function NewReservationModal({ onClose, preselectedFacility = '' 
                       <div>
                         <span className="text-sm text-gray-700 font-medium">{a.name}</span>
                         <span className="text-xs text-[#1C2833] ml-1">×{a.quantity}</span>
+                        {Number(a.fee) > 0 && (
+                          <span className="block text-xs text-[#C0392B] font-medium">
+                            +₱{Number(a.fee).toLocaleString()}
+                          </span>
+                        )}
                       </div>
                     </label>
                   ))}
+                </div>
+              </div>
+            )}
+
+            {Number(form.number_of_participants) >= LARGE_EVENT_THRESHOLD && (
+              <div className="space-y-3">
+                <Alert variant="warning" title={`Events with ${LARGE_EVENT_THRESHOLD}+ participants need a plan on file`}>
+                  Admins can't approve this request until all three fields below are filled in.
+                </Alert>
+
+                <div>
+                  <Label>Waste Management Plan *</Label>
+                  <textarea
+                    rows={2}
+                    value={form.waste_management_plan}
+                    onChange={e => setField('waste_management_plan', e.target.value)}
+                    placeholder="How will trash/waste be collected and disposed of during and after the event?"
+                    className={`mt-1 block w-full rounded-lg border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#FADBD8] focus:border-[#C0392B] resize-none ${
+                      errors.waste_management_plan ? 'border-[#C0392B]' : 'border-[#E5E7E9]'
+                    }`}
+                  />
+                  {errors.waste_management_plan && <p className="text-red-500 text-xs mt-1">{errors.waste_management_plan}</p>}
+                </div>
+
+                <div>
+                  <Label>Crowd Management Plan *</Label>
+                  <textarea
+                    rows={2}
+                    value={form.crowd_management_plan}
+                    onChange={e => setField('crowd_management_plan', e.target.value)}
+                    placeholder="How will entry/exit, crowd flow, and security be handled?"
+                    className={`mt-1 block w-full rounded-lg border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#FADBD8] focus:border-[#C0392B] resize-none ${
+                      errors.crowd_management_plan ? 'border-[#C0392B]' : 'border-[#E5E7E9]'
+                    }`}
+                  />
+                  {errors.crowd_management_plan && <p className="text-red-500 text-xs mt-1">{errors.crowd_management_plan}</p>}
+                </div>
+
+                <div>
+                  <Label>Pre-Event &amp; Post-Event Considerations *</Label>
+                  <textarea
+                    rows={2}
+                    value={form.event_considerations}
+                    onChange={e => setField('event_considerations', e.target.value)}
+                    placeholder="Setup/teardown schedule, equipment arrival, cleanup responsibilities, etc."
+                    className={`mt-1 block w-full rounded-lg border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#FADBD8] focus:border-[#C0392B] resize-none ${
+                      errors.event_considerations ? 'border-[#C0392B]' : 'border-[#E5E7E9]'
+                    }`}
+                  />
+                  {errors.event_considerations && <p className="text-red-500 text-xs mt-1">{errors.event_considerations}</p>}
                 </div>
               </div>
             )}
@@ -537,8 +722,13 @@ export default function NewReservationModal({ onClose, preselectedFacility = '' 
             </div>
             <p className="text-xs text-[#1C2833] mb-3">Please read and accept the terms before submitting your reservation.</p>
 
+            <Alert variant="warning" title="Reservations may be cancelled by Cabuyao City Hall" className="mb-3 text-xs">
+              CABS facilities are government property and may be pre-empted by the city government at
+              any time — see "City Hall Authority" below.
+            </Alert>
+
             <div className="border border-[#E5E7E9] rounded-lg divide-y divide-[#F2F3F4] max-h-56 overflow-y-auto">
-              {termsFor(effectiveType).map(({ heading, body }) => (
+              {[...termsFor(effectiveType), ...facilityTermsFor(facilityDetail)].map(({ heading, body }) => (
                 <div key={heading} className="px-4 py-3">
                   <h4 className="text-xs font-semibold text-gray-900 mb-0.5">{heading}</h4>
                   <p className="text-xs text-[#1C2833] leading-relaxed">{body}</p>
@@ -581,6 +771,16 @@ export default function NewReservationModal({ onClose, preselectedFacility = '' 
                 ],
                 ...(facilityDetail?.requires_authorization_letter
                   ? [['Authorization Letter', letterFile?.name ?? '—']]
+                  : []),
+                ...(facilityDetail?.requires_request_letter
+                  ? [['Request Letter', requestLetterFile?.name ?? '—']]
+                  : []),
+                ...(Number(form.number_of_participants) >= LARGE_EVENT_THRESHOLD
+                  ? [
+                      ['Waste Management', form.waste_management_plan],
+                      ['Crowd Management', form.crowd_management_plan],
+                      ['Event Considerations', form.event_considerations],
+                    ]
                   : []),
                 ['Terms',        <span key="t" className="text-[#27AE60] font-medium">Accepted</span>],
               ].map(([label, value]) => (

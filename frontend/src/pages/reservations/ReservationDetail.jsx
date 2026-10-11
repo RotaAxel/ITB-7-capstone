@@ -54,18 +54,21 @@ export default function ReservationDetail() {
       .catch(() => toast.error('Failed to download receipt.'))
   }
 
-  const downloadAuthorizationLetter = () => {
-    api.get(`/reservations/${id}/authorization-letter`, { responseType: 'blob' })
+  // kind is 'authorization' | 'request' — two independent documents (see
+  // Facility::requires_authorization_letter / requires_request_letter) that
+  // share this same download logic.
+  const downloadLetter = (kind) => {
+    api.get(`/reservations/${id}/${kind}-letter`, { responseType: 'blob' })
       .then(res => {
         const ext = { 'application/pdf': 'pdf', 'image/jpeg': 'jpg', 'image/png': 'png' }[res.data.type] || 'bin'
         const url = URL.createObjectURL(res.data)
         const a   = document.createElement('a')
         a.href = url
-        a.download = `authorization-letter-reservation-${id}.${ext}`
+        a.download = `${kind}-letter-reservation-${id}.${ext}`
         a.click()
         URL.revokeObjectURL(url)
       })
-      .catch(() => toast.error('Failed to download the authorization letter.'))
+      .catch(() => toast.error(`Failed to download the ${kind} letter.`))
   }
 
   if (isLoading) return <div className="flex justify-center py-16"><Spinner size="lg" /></div>
@@ -105,6 +108,14 @@ export default function ReservationDetail() {
           <div className="border-l-4 border-[#C0392B] pl-4">
             <h1 className="text-2xl font-bold text-[#1C2833]">Reservation #{r.id}</h1>
             <p className="text-[#1C2833] text-sm mt-0.5">{r.facility?.name}</p>
+            {r.reservation_group_id && (
+              <Link
+                to={`/reservations/group/${r.reservation_group_id}`}
+                className="text-xs text-[#2980B9] hover:underline font-medium mt-0.5 inline-block"
+              >
+                Part of a multi-date bundle — view all dates
+              </Link>
+            )}
           </div>
         </div>
         <div className="flex gap-2 flex-wrap">
@@ -127,6 +138,9 @@ export default function ReservationDetail() {
                 ['Duration',     duration != null ? `${duration}h` : '—'],
                 ['Purpose',      r.purpose],
                 ['Participants', r.number_of_participants],
+                ...(r.waste_management_plan ? [['Waste Management', r.waste_management_plan]] : []),
+                ...(r.crowd_management_plan ? [['Crowd Management', r.crowd_management_plan]] : []),
+                ...(r.event_considerations  ? [['Event Considerations', r.event_considerations]] : []),
                 ['Submitted',    r.created_at ? format(parseISO(r.created_at), 'MMM d, yyyy h:mm a') : '—'],
               ].map(([label, value]) => (
                 <div key={label} className="flex gap-4 py-2.5">
@@ -221,8 +235,14 @@ export default function ReservationDetail() {
           )}
 
           {r.authorization_letter_path && (
-            <Button variant="outline" onClick={downloadAuthorizationLetter}>
+            <Button variant="outline" onClick={() => downloadLetter('authorization')}>
               <Download className="h-4 w-4" /> Your Authorization Letter
+            </Button>
+          )}
+
+          {r.request_letter_path && (
+            <Button variant="outline" onClick={() => downloadLetter('request')}>
+              <Download className="h-4 w-4" /> Your Request Letter
             </Button>
           )}
 

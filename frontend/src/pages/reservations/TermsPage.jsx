@@ -7,6 +7,7 @@ import api from '@/api/axios'
 import { Card, CardContent } from '@/components/ui/Card'
 import Button from '@/components/ui/Button'
 import Spinner from '@/components/ui/Spinner'
+import Alert from '@/components/ui/Alert'
 
 const termsFor = type => [
   {
@@ -37,7 +38,54 @@ const termsFor = type => [
     heading: '6. Compliance',
     body: 'All users must comply with CABS rules and regulations. Non-compliance may result in immediate termination of the reservation without refund and may affect future booking privileges.',
   },
+  {
+    heading: '7. City Hall Authority',
+    body: 'CABS facilities are government property. The Cabuyao City Hall / local government may cancel or pre-empt any reservation at any time — for public events, emergencies, maintenance, or other administrative directives — even after approval or payment. Affected clients will be notified as soon as possible and are entitled to a full refund for any reservation cancelled on this basis.',
+  },
 ]
+
+// Appended after the generic clauses above, only for whichever fields the
+// facility actually has set — unnumbered and clearly labeled "Facility-
+// Specific" so it reads as this facility's own rules layered on top of the
+// system-wide terms, not a continuation of the numbered list (which would
+// otherwise have to renumber itself depending on which fields are present).
+const facilityTermsFor = facility => {
+  if (!facility) return []
+  const sections = []
+  if (facility.requires_authorization_letter) {
+    sections.push({
+      heading: 'Facility-Specific: Authorization Letter',
+      body: `A signed authorization letter (PDF or image) must be attached when reserving ${facility.name}.`,
+    })
+  }
+  if (facility.requires_request_letter) {
+    sections.push({
+      heading: 'Facility-Specific: Request Letter',
+      body: `A formal request letter (PDF or image) addressed to CABS/City Hall must be attached when reserving ${facility.name}.`,
+    })
+  }
+  if (facility.what_to_bring) {
+    sections.push({ heading: 'Facility-Specific: What to Bring', body: facility.what_to_bring })
+  }
+  if (facility.restrictions) {
+    sections.push({ heading: 'Facility-Specific: Restrictions', body: facility.restrictions })
+  }
+  if (facility.additional_terms) {
+    sections.push({ heading: 'Facility-Specific: Additional Terms', body: facility.additional_terms })
+  }
+  const messFee   = Number(facility.excessive_mess_fee ?? 0)
+  const damageFee = Number(facility.damage_clearance_fee ?? 0)
+  if (messFee > 0 || damageFee > 0) {
+    const parts = []
+    if (messFee > 0)   parts.push(`an excessive mess fee of ₱${messFee.toLocaleString()}`)
+    if (damageFee > 0) parts.push(`a damage/clearance fee of ₱${damageFee.toLocaleString()}`)
+    sections.push({
+      heading: 'Facility-Specific: Cleanliness & Damage Fees',
+      body: `Following a post-event inspection, ${parts.join(' and/or ')} may be charged if applicable. This is not collected upfront and only applies if the facility is left excessively messy or damaged.`,
+    })
+  }
+  return sections
+}
 
 export default function TermsPage() {
   const { id }      = useParams()
@@ -93,9 +141,15 @@ export default function TermsPage() {
         Please read and acknowledge the following terms before proceeding to payment.
       </p>
 
+      <Alert variant="warning" title="Reservations may be cancelled by Cabuyao City Hall" className="mb-5">
+        CABS facilities are government property. The Cabuyao City Hall / local government may cancel
+        or pre-empt any reservation at any time, even after approval or payment — see "City Hall
+        Authority" below for details.
+      </Alert>
+
       <Card className="mb-5">
         <CardContent className="space-y-5 py-5">
-          {termsFor(reservation?.type).map(({ heading, body }) => (
+          {[...termsFor(reservation?.type), ...facilityTermsFor(reservation?.facility)].map(({ heading, body }) => (
             <div key={heading}>
               <h3 className="font-semibold text-gray-900 text-sm mb-1">{heading}</h3>
               <p className="text-sm text-gray-600 leading-relaxed">{body}</p>

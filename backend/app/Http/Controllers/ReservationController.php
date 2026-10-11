@@ -2,15 +2,23 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\Amenity;
 use App\Models\Facility;
 use App\Models\Payment;
 use App\Models\Reservation;
 use App\Services\NotificationService;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Str;
 
 class ReservationController extends Controller
 {
+    // At or above this many participants, a reservation is treated as a "large
+    // event" and must include waste/crowd management plans and event
+    // considerations — below it, those fields aren't even shown on the form.
+    private const LARGE_EVENT_THRESHOLD = 50;
+
     // ─── Client / shared listing ──────────────────────────────────────────────
 
     public function index(Request $request)
@@ -37,6 +45,10 @@ class ReservationController extends Controller
             ->when($request->filled('date'),        fn($q) => $q->where('reservation_date', $request->date))
             ->when($request->filled('date_from'),   fn($q) => $q->where('reservation_date', '>=', $request->date_from))
             ->when($request->filled('date_to'),     fn($q) => $q->where('reservation_date', '<=', $request->date_to))
+            // Priority reservations (e.g. the mayor's office / city hall events)
+            // always surface at the top of the queue, regardless of filters or how
+            // recently they were submitted.
+            ->orderByDesc('is_priority')
             ->orderByDesc('created_at');
 
         return response()->json($query->paginate(20));
@@ -49,8 +61,17 @@ class ReservationController extends Controller
         $validated = $request->validate([
             'facility_id'            => ['required', 'exists:facilities,id'],
             'purpose'                => ['required', 'string'],
+            'waste_management_plan'  => ['nullable', 'string'],
+            'crowd_management_plan'  => ['nullable', 'string'],
+            'event_considerations'   => ['nullable', 'string'],
             'number_of_participants' => ['required', 'integer', 'min:1'],
-            'reservation_date'       => ['required', 'date', 'after_or_equal:today'],
+            // Either a single date (the ordinary path — every existing caller keeps
+            // working unchanged) or several dates bundled into one request (e.g.
+            // "every Saturday in March"), sharing this same time slot, purpose,
+            // amenities, letters, and terms across every date in the bundle.
+            'reservation_date'       => ['required_without:reservation_dates', 'nullable', 'date', 'after_or_equal:today'],
+            'reservation_dates'      => ['required_without:reservation_date', 'nullable', 'array', 'min:1', 'max:30'],
+            'reservation_dates.*'    => ['date', 'after_or_equal:today'],
             'start_time'             => ['required', 'date_format:H:i'],
             'end_time'               => ['required', 'date_format:H:i', 'after:start_time'],
             'selected_amenities'     => ['nullable', 'array'],
@@ -66,6 +87,11 @@ class ReservationController extends Controller
             'terms_acknowledged'     => ['sometimes'],
             'type'                   => ['required', 'in:reserve,book'],
             'authorization_letter'   => ['nullable', 'file', 'mimes:pdf,jpg,jpeg,png', 'max:5120'],
+            // Distinct from authorization_letter — the formal letter requesting use
+            // of the facility itself, vs. a letter authorizing the requester to book
+            // on an organization's behalf. A facility can require either, both, or
+            // neither; see Facility::requires_request_letter.
+            'request_letter'         => ['nullable', 'file', 'mimes:pdf,jpg,jpeg,png', 'max:5120'],
         ]);
 
         $facility = Facility::findOrFail($validated['facility_id']);
@@ -82,15 +108,24 @@ class ReservationController extends Controller
             ], 422);
         }
 
-        // A facility that requires an authorization letter always needs staff to
-        // actually look at that letter before anything is confirmed — that's
-        // incompatible with "Book", which auto-confirms the moment payment clears
-        // with no human review. The frontend already only offers "Reserve" for
-        // these facilities; this is the server-side backstop against a direct API
-        // call trying to force "book" through anyway.
-        if ($facility->requires_authorization_letter && $validated['type'] === 'book') {
+        if ($facility->requires_request_letter && !$request->hasFile('request_letter')) {
             return response()->json([
-                'message' => "{$facility->name} requires an authorization letter, so it only accepts reservation requests, not instant bookings.",
+                'message' => "{$facility->name} requires a request letter to be attached before you can submit a reservation.",
+            ], 422);
+        }
+
+        // A facility that requires an authorization or request letter always needs
+        // staff to actually look at that letter before anything is confirmed —
+        // that's incompatible with "Book", which auto-confirms the moment payment
+        // clears with no human review. The frontend already only offers "Reserve"
+        // for these facilities; this is the server-side backstop against a direct
+        // API call trying to force "book" through anyway.
+        if (($facility->requires_authorization_letter || $facility->requires_request_letter) && $validated['type'] === 'book') {
+            $letterKind = $facility->requires_authorization_letter && $facility->requires_request_letter
+                ? 'an authorization letter and a request letter'
+                : ($facility->requires_authorization_letter ? 'an authorization letter' : 'a request letter');
+            return response()->json([
+                'message' => "{$facility->name} requires {$letterKind}, so it only accepts reservation requests, not instant bookings.",
             ], 422);
         }
 
@@ -101,69 +136,168 @@ class ReservationController extends Controller
             ], 422);
         }
 
-        // Conflict check
-        $conflict = Reservation::where('facility_id', $validated['facility_id'])
-            ->where('reservation_date', $validated['reservation_date'])
-            ->whereIn('status', ['pending', 'approved', 'confirmed'])
-            ->where(function ($q) use ($validated) {
-                $q->where(function ($inner) use ($validated) {
-                    $inner->where('start_time', '<', $validated['end_time'])
-                          ->where('end_time', '>', $validated['start_time']);
-                });
-            })
-            ->exists();
+        // Large events need an actual plan on file before admins approve them —
+        // the frontend already only shows these fields once participants cross the
+        // threshold, so this is the server-side backstop against a direct API call
+        // skipping them.
+        if ($validated['number_of_participants'] >= self::LARGE_EVENT_THRESHOLD) {
+            $missing = array_filter([
+                'waste_management_plan' => 'a waste management plan',
+                'crowd_management_plan' => 'a crowd management plan',
+                'event_considerations'  => 'pre-event and post-event considerations',
+            ], fn ($label, $field) => empty($validated[$field] ?? null), ARRAY_FILTER_USE_BOTH);
 
-        if ($conflict) {
-            return response()->json([
-                'message' => 'This time slot is already booked. Please choose a different time.',
-            ], 422);
+            if ($missing) {
+                return response()->json([
+                    'message' => 'Events with ' . self::LARGE_EVENT_THRESHOLD . ' or more participants must include '
+                        . implode(', ', $missing) . '.',
+                ], 422);
+            }
         }
 
-        // Calculate amount — use timestamps to avoid Carbon 3 signed-diff behaviour
-        $startTs = strtotime($validated['reservation_date'] . ' ' . $validated['start_time']);
-        $endTs   = strtotime($validated['reservation_date'] . ' ' . $validated['end_time']);
+        // Dates to create — a plain `reservation_date` becomes a one-element list,
+        // so the single-date path below (and every response it produces) is
+        // byte-for-byte identical to before this feature existed. Deduped and
+        // sorted so a client submitting the same date twice, or out of order,
+        // doesn't create two rows for one date.
+        $dates = $validated['reservation_dates'] ?? [$validated['reservation_date']];
+        $dates = collect($dates)->unique()->sort()->values()->all();
+        $isGroup = count($dates) > 1;
+
+        // Conflict check — every date in the bundle, up front, before creating
+        // anything. One shared time slot across all dates (see validation above).
+        $conflictDates = [];
+        foreach ($dates as $date) {
+            $conflict = Reservation::where('facility_id', $validated['facility_id'])
+                ->where('reservation_date', $date)
+                ->whereIn('status', ['pending', 'approved', 'confirmed'])
+                ->where(function ($q) use ($validated) {
+                    $q->where(function ($inner) use ($validated) {
+                        $inner->where('start_time', '<', $validated['end_time'])
+                              ->where('end_time', '>', $validated['start_time']);
+                    });
+                })
+                ->exists();
+            if ($conflict) {
+                $conflictDates[] = $date;
+            }
+        }
+
+        if ($conflictDates) {
+            $message = $isGroup
+                ? 'These dates are already booked for this time slot: ' . implode(', ', $conflictDates) . '. Please adjust your dates and try again.'
+                : 'This time slot is already booked. Please choose a different time.';
+            return response()->json(['message' => $message], 422);
+        }
+
+        // Calculate per-date amount — use timestamps to avoid Carbon 3 signed-diff
+        // behaviour. Every date shares the same time slot, so the hours (and thus
+        // the per-date facility cost) are identical across the bundle.
+        $startTs = strtotime($dates[0] . ' ' . $validated['start_time']);
+        $endTs   = strtotime($dates[0] . ' ' . $validated['end_time']);
         $hours   = max(0, ($endTs - $startTs) / 3600);
-        $amount  = round($facility->price_per_hour * $hours, 2);
+
+        // Each selected amenity ("material") can carry its own flat additional fee
+        // (see the migration that added Amenity::fee) — summed once per selection,
+        // not multiplied by its stock `quantity` column, and charged once per date
+        // in the bundle (each date gets its own full set of amenities). Re-sums
+        // from the DB rather than trusting any client-sent amount, so this can't
+        // be tampered with.
+        $amenitiesFee = !empty($validated['selected_amenities'])
+            ? Amenity::whereIn('id', $validated['selected_amenities'])->sum('fee')
+            : 0;
+
+        // Facility::rateFor() returns the discounted resident_price_per_hour only
+        // for a verified Cabuyeño resident (and only when the facility has one set)
+        // — re-derived from the authenticated user's own server-side verification
+        // status, never trusted from the client.
+        $rate           = $facility->rateFor($request->user());
+        $amountPerDate  = round($rate * $hours + $amenitiesFee, 2);
 
         // Private ("local") disk, not the public one facility images use — this can
         // be a personally-identifying document, served only via an authenticated
-        // download route rather than a guessable public URL.
+        // download route rather than a guessable public URL. Stored once and the
+        // same path reused on every reservation row in the bundle — the client
+        // only uploads one letter covering the whole multi-date request.
         $letterPath = $request->hasFile('authorization_letter')
             ? $request->file('authorization_letter')->store('authorization-letters', 'local')
             : null;
 
+        $requestLetterPath = $request->hasFile('request_letter')
+            ? $request->file('request_letter')->store('request-letters', 'local')
+            : null;
+
         $termsAcknowledged = $request->boolean('terms_acknowledged');
+        $groupId = $isGroup ? (string) Str::uuid() : null;
 
-        $reservation = Reservation::create([
-            'user_id'                   => $request->user()->id,
-            'facility_id'               => $validated['facility_id'],
-            'purpose'                   => $validated['purpose'],
-            'number_of_participants'    => $validated['number_of_participants'],
-            'reservation_date'          => $validated['reservation_date'],
-            'start_time'                => $validated['start_time'],
-            'end_time'                  => $validated['end_time'],
-            'selected_amenities'        => $validated['selected_amenities'] ?? null,
-            'status'                    => 'pending',
-            'type'                      => $validated['type'],
-            'terms_acknowledged'        => $termsAcknowledged,
-            'terms_acknowledged_at'     => $termsAcknowledged ? now() : null,
-            'authorization_letter_path' => $letterPath,
-        ]);
+        $reservations = DB::transaction(function () use (
+            $dates, $groupId, $validated, $request, $amountPerDate,
+            $termsAcknowledged, $letterPath, $requestLetterPath
+        ) {
+            return collect($dates)->map(function ($date) use (
+                $groupId, $validated, $request, $amountPerDate,
+                $termsAcknowledged, $letterPath, $requestLetterPath
+            ) {
+                $reservation = Reservation::create([
+                    'user_id'                   => $request->user()->id,
+                    'facility_id'                => $validated['facility_id'],
+                    'reservation_group_id'       => $groupId,
+                    'purpose'                    => $validated['purpose'],
+                    'waste_management_plan'      => $validated['waste_management_plan'] ?? null,
+                    'crowd_management_plan'      => $validated['crowd_management_plan'] ?? null,
+                    'event_considerations'       => $validated['event_considerations'] ?? null,
+                    'number_of_participants'     => $validated['number_of_participants'],
+                    'reservation_date'           => $date,
+                    'start_time'                 => $validated['start_time'],
+                    'end_time'                   => $validated['end_time'],
+                    'selected_amenities'         => $validated['selected_amenities'] ?? null,
+                    'status'                     => 'pending',
+                    'type'                       => $validated['type'],
+                    'terms_acknowledged'         => $termsAcknowledged,
+                    'terms_acknowledged_at'      => $termsAcknowledged ? now() : null,
+                    'authorization_letter_path'  => $letterPath,
+                    'request_letter_path'        => $requestLetterPath,
+                ]);
 
-        Payment::create([
-            'reservation_id' => $reservation->id,
-            'user_id'        => $request->user()->id,
-            'amount'         => $amount,
-            'currency'       => 'PHP',
-            'status'         => 'pending',
-        ]);
+                Payment::create([
+                    'reservation_id' => $reservation->id,
+                    'user_id'        => $request->user()->id,
+                    'amount'         => $amountPerDate,
+                    'currency'       => 'PHP',
+                    'status'         => 'pending',
+                ]);
+
+                return $reservation;
+            });
+        });
 
         $typeLabel = $validated['type'] === 'book' ? 'a booking (instant confirm on payment)' : 'a reservation request';
+
+        if ($isGroup) {
+            $dateList = implode(', ', $dates);
+            NotificationService::notifyAdmins(
+                'new_reservation',
+                'New Multi-Date Reservation Request',
+                "{$request->user()->full_name} submitted {$typeLabel} for {$facility->name} on " . count($dates)
+                    . " dates ({$dateList}) from {$validated['start_time']} to {$validated['end_time']}.",
+                $reservations->first()->id
+            );
+
+            return response()->json([
+                'group_id'     => $groupId,
+                // collect()->map() returns a plain Support Collection, not an
+                // Eloquent one — no collection-wide load(), so load() per item
+                // via the each() higher-order proxy instead.
+                'reservations' => $reservations->each->load(['facility', 'payment']),
+            ], 201);
+        }
+
+        $reservation = $reservations->first();
 
         NotificationService::notifyAdmins(
             'new_reservation',
             'New Reservation Request',
-            "{$request->user()->full_name} submitted {$typeLabel} for {$facility->name} on {$validated['reservation_date']} from {$validated['start_time']} to {$validated['end_time']}.",
+            "{$request->user()->full_name} submitted {$typeLabel} for {$facility->name} on {$dates[0]} from {$validated['start_time']} to {$validated['end_time']}.",
             $reservation->id
         );
 
@@ -196,13 +330,94 @@ class ReservationController extends Controller
     public function show(Request $request, $id)
     {
         $user        = $request->user();
-        $reservation = Reservation::with(['user', 'facility', 'payment', 'reviewer'])->findOrFail($id);
+        // facility.amenities (not just facility) so the frontend can resolve
+        // selected_amenities' names/fees without a second request — used by the
+        // receipt views to itemize the amenities/materials fee.
+        $reservation = Reservation::with(['user', 'facility.amenities', 'payment', 'reviewer'])->findOrFail($id);
 
         if ($user->isClient() && $reservation->user_id !== $user->id) {
             return response()->json(['message' => 'Forbidden.'], 403);
         }
 
         return response()->json($reservation);
+    }
+
+    // ─── Group: Show ──────────────────────────────────────────────────────────
+
+    public function showGroup(Request $request, $groupId)
+    {
+        $user = $request->user();
+
+        $reservations = Reservation::with(['user', 'facility.amenities', 'payment', 'reviewer'])
+            ->where('reservation_group_id', $groupId)
+            ->orderBy('reservation_date')
+            ->get();
+
+        if ($reservations->isEmpty()) {
+            return response()->json(['message' => 'Reservation group not found.'], 404);
+        }
+
+        if ($user->isClient() && $reservations->first()->user_id !== $user->id) {
+            return response()->json(['message' => 'Forbidden.'], 403);
+        }
+
+        return response()->json([
+            'group_id'     => $groupId,
+            'reservations' => $reservations,
+            'total_amount' => $reservations->sum(fn ($r) => (float) ($r->payment->amount ?? 0)),
+        ]);
+    }
+
+    // ─── Group: Approve / Reject / Cancel ──────────────────────────────────────
+    // Thin wrappers that reuse the exact same per-reservation logic and
+    // notifications as the single-reservation endpoints above — just looped
+    // across every member of the group — rather than duplicating that logic, so
+    // a single-date reservation's behavior can never drift from a group
+    // member's.
+
+    public function approveGroup(Request $request, $groupId)
+    {
+        return $this->runGroupAction($groupId, fn ($id) => $this->approve($request, $id));
+    }
+
+    public function rejectGroup(Request $request, $groupId)
+    {
+        $request->validate(['admin_note' => ['required', 'string']]);
+        return $this->runGroupAction($groupId, fn ($id) => $this->reject($request, $id));
+    }
+
+    public function cancelGroup(Request $request, $groupId)
+    {
+        return $this->runGroupAction($groupId, fn ($id) => $this->cancel($request, $id));
+    }
+
+    private function runGroupAction(string $groupId, \Closure $action)
+    {
+        $ids = Reservation::where('reservation_group_id', $groupId)->pluck('id');
+
+        if ($ids->isEmpty()) {
+            return response()->json(['message' => 'Reservation group not found.'], 404);
+        }
+
+        $results = [];
+        foreach ($ids as $id) {
+            $response = $action($id);
+            $results[$id] = [
+                'status'  => $response->getStatusCode(),
+                'message' => json_decode($response->getContent(), true)['message'] ?? null,
+            ];
+        }
+
+        $failed    = collect($results)->filter(fn ($r) => $r['status'] >= 400);
+        $succeeded = count($results) - $failed->count();
+
+        return response()->json([
+            'group_id' => $groupId,
+            'results'  => $results,
+            'message'  => $failed->isEmpty()
+                ? 'Applied to all ' . count($results) . ' reservation(s) in the group.'
+                : "{$succeeded} of " . count($results) . " succeeded; {$failed->count()} failed (see results for details).",
+        ]);
     }
 
     // ─── Authorization Letter (download) ──────────────────────────────────────
@@ -229,6 +444,33 @@ class ReservationController extends Controller
         return Storage::disk('local')->download(
             $reservation->authorization_letter_path,
             "authorization-letter-reservation-{$reservation->id}.{$extension}"
+        );
+    }
+
+    // ─── Request Letter (download) ─────────────────────────────────────────────
+
+    public function downloadRequestLetter(Request $request, $id)
+    {
+        $user        = $request->user();
+        $reservation = Reservation::findOrFail($id);
+
+        if ($user->isClient() && $reservation->user_id !== $user->id) {
+            return response()->json(['message' => 'Forbidden.'], 403);
+        }
+
+        if (!$reservation->request_letter_path) {
+            return response()->json(['message' => 'No request letter was submitted for this reservation.'], 404);
+        }
+
+        if (!Storage::disk('local')->exists($reservation->request_letter_path)) {
+            return response()->json(['message' => 'The request letter file is missing.'], 404);
+        }
+
+        $extension = pathinfo($reservation->request_letter_path, PATHINFO_EXTENSION);
+
+        return Storage::disk('local')->download(
+            $reservation->request_letter_path,
+            "request-letter-reservation-{$reservation->id}.{$extension}"
         );
     }
 
@@ -301,10 +543,15 @@ class ReservationController extends Controller
         }
 
         // Safety net — this shouldn't happen since store() already requires the
-        // letter up front, but guards against older data or a bypassed client.
+        // letter(s) up front, but guards against older data or a bypassed client.
         if ($reservation->facility->requires_authorization_letter && !$reservation->authorization_letter_path) {
             return response()->json([
                 'message' => "{$reservation->facility->name} requires an authorization letter, but none was submitted with this reservation.",
+            ], 422);
+        }
+        if ($reservation->facility->requires_request_letter && !$reservation->request_letter_path) {
+            return response()->json([
+                'message' => "{$reservation->facility->name} requires a request letter, but none was submitted with this reservation.",
             ], 422);
         }
 
@@ -426,5 +673,24 @@ class ReservationController extends Controller
         );
 
         return response()->json(['message' => 'Reservation marked as completed.', 'reservation' => $reservation->fresh()]);
+    }
+
+    // ─── Admin/Staff: Priority flag + internal note ────────────────────────────
+    // Distinct from admin_note (the client-facing rejection reason) — this is
+    // staff/admin's own private reference, never shown to the client, and can be
+    // set on a reservation at any status, any time.
+
+    public function updateNotes(Request $request, $id)
+    {
+        $reservation = Reservation::findOrFail($id);
+
+        $validated = $request->validate([
+            'is_priority'   => ['sometimes', 'boolean'],
+            'internal_note' => ['nullable', 'string'],
+        ]);
+
+        $reservation->update($validated);
+
+        return response()->json($reservation->fresh());
     }
 }

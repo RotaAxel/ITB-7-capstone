@@ -87,6 +87,9 @@ class FacilityController extends Controller
             'location'      => ['required', 'string', 'max:255'],
             'capacity'      => ['required', 'integer', 'min:1'],
             'price_per_hour'=> ['required', 'numeric', 'min:0'],
+            // Discounted rate for verified Cabuyeño residents — null/omitted means
+            // no resident discount, everyone pays price_per_hour.
+            'resident_price_per_hour' => ['nullable', 'numeric', 'min:0'],
             'status'        => ['in:available,under_maintenance,unavailable'],
             // Not "boolean" — this form posts as multipart/form-data, where a checkbox
             // arrives as the literal string "true"/"false", and Laravel's "boolean"
@@ -96,6 +99,17 @@ class FacilityController extends Controller
             // below already normalizes any of these forms correctly, so this field
             // just needs to be present, not strictly typed.
             'requires_authorization_letter' => ['sometimes'],
+            // Same multipart-boolean caveat as above — see that comment.
+            'requires_request_letter' => ['sometimes'],
+            // All optional, facility-specific terms content — see the migration that
+            // added these columns. Free text, not structured, since restrictions/what-
+            // to-bring reasonably vary in shape per facility (a list for one, a
+            // paragraph for another).
+            'what_to_bring'         => ['nullable', 'string'],
+            'restrictions'          => ['nullable', 'string'],
+            'additional_terms'      => ['nullable', 'string'],
+            'excessive_mess_fee'    => ['nullable', 'numeric', 'min:0'],
+            'damage_clearance_fee'  => ['nullable', 'numeric', 'min:0'],
             // Laravel's 'image' rule doesn't accept SVG in this version even though
             // it's a perfectly valid image (fileinfo correctly detects it as
             // image/svg+xml) — use an explicit mimes list instead so SVG uploads
@@ -114,9 +128,16 @@ class FacilityController extends Controller
             'location'       => $validated['location'],
             'capacity'       => $validated['capacity'],
             'price_per_hour' => $validated['price_per_hour'],
+            'resident_price_per_hour' => $validated['resident_price_per_hour'] ?? null,
             'status'         => $validated['status'] ?? 'available',
             'image_path'     => $imagePath,
             'requires_authorization_letter' => $request->boolean('requires_authorization_letter'),
+            'requires_request_letter' => $request->boolean('requires_request_letter'),
+            'what_to_bring'        => $validated['what_to_bring'] ?? null,
+            'restrictions'         => $validated['restrictions'] ?? null,
+            'additional_terms'     => $validated['additional_terms'] ?? null,
+            'excessive_mess_fee'   => $validated['excessive_mess_fee'] ?? null,
+            'damage_clearance_fee' => $validated['damage_clearance_fee'] ?? null,
         ]);
 
         return response()->json($facility->load('amenities'), 201);
@@ -132,9 +153,17 @@ class FacilityController extends Controller
             'location'      => ['sometimes', 'string', 'max:255'],
             'capacity'      => ['sometimes', 'integer', 'min:1'],
             'price_per_hour'=> ['sometimes', 'numeric', 'min:0'],
+            'resident_price_per_hour' => ['nullable', 'numeric', 'min:0'],
             'status'        => ['sometimes', 'in:available,under_maintenance,unavailable'],
             // See the comment on this same rule in store() above — not "boolean".
             'requires_authorization_letter' => ['sometimes'],
+            'requires_request_letter' => ['sometimes'],
+            // See the comment on these same fields in store() above.
+            'what_to_bring'         => ['nullable', 'string'],
+            'restrictions'          => ['nullable', 'string'],
+            'additional_terms'      => ['nullable', 'string'],
+            'excessive_mess_fee'    => ['nullable', 'numeric', 'min:0'],
+            'damage_clearance_fee'  => ['nullable', 'numeric', 'min:0'],
             // Laravel's 'image' rule doesn't accept SVG in this version even though
             // it's a perfectly valid image (fileinfo correctly detects it as
             // image/svg+xml) — use an explicit mimes list instead so SVG uploads
@@ -154,6 +183,9 @@ class FacilityController extends Controller
         // (a raw (bool) cast would treat the string "false" as truthy).
         if ($request->has('requires_authorization_letter')) {
             $validated['requires_authorization_letter'] = $request->boolean('requires_authorization_letter');
+        }
+        if ($request->has('requires_request_letter')) {
+            $validated['requires_request_letter'] = $request->boolean('requires_request_letter');
         }
 
         unset($validated['image']);
@@ -227,6 +259,9 @@ class FacilityController extends Controller
             'name'         => ['required', 'string', 'max:255'],
             'description'  => ['nullable', 'string'],
             'quantity'     => ['required', 'integer', 'min:1'],
+            // Flat per-selection charge, not multiplied by quantity — see the
+            // migration that added this column.
+            'fee'          => ['nullable', 'numeric', 'min:0'],
             'is_available' => ['boolean'],
         ]);
 
@@ -243,6 +278,7 @@ class FacilityController extends Controller
             'name'         => ['sometimes', 'string', 'max:255'],
             'description'  => ['nullable', 'string'],
             'quantity'     => ['sometimes', 'integer', 'min:1'],
+            'fee'          => ['nullable', 'numeric', 'min:0'],
             'is_available' => ['boolean'],
         ]);
 

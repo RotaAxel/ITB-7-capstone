@@ -35,6 +35,11 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/auth/user',       [AuthController::class, 'user']);
     Route::put('/auth/profile',    [AuthController::class, 'updateProfile']);
     Route::put('/auth/password',   [AuthController::class, 'changePassword']);
+    Route::post('/auth/residency-proof',      [AuthController::class, 'uploadResidencyProof']);
+    // Shared by a client viewing their own proof and an admin/staff reviewing
+    // someone else's — ownership-checked in the controller, same pattern as the
+    // reservation letter downloads.
+    Route::get('/users/{id}/residency-proof', [AuthController::class, 'downloadResidencyProof']);
 
     // Facilities (read only for authenticated users)
     Route::get('/facilities',                         [FacilityController::class, 'index']);
@@ -57,12 +62,22 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('/reservations/{id}/cancel',                  [ReservationController::class, 'cancel']);
     Route::post('/reservations/{id}/acknowledge-terms',       [ReservationController::class, 'acknowledgeTerms']);
     Route::get('/reservations/{id}/authorization-letter',     [ReservationController::class, 'downloadAuthorizationLetter']);
+    Route::get('/reservations/{id}/request-letter',            [ReservationController::class, 'downloadRequestLetter']);
+
+    // Reservation groups — several dates submitted/approved/paid together as one
+    // bundle (see store()'s reservation_dates[] path). Two path segments after
+    // /reservations/, so these never collide with the single /reservations/{id}
+    // routes above (which only ever match one segment).
+    Route::get('/reservations/groups/{groupId}',               [ReservationController::class, 'showGroup']);
+    Route::post('/reservations/groups/{groupId}/cancel',       [ReservationController::class, 'cancelGroup']);
 
     // Payments
     Route::post('/payments/{reservationId}/create-link',      [PaymentController::class, 'createLink']);
     Route::post('/payments/{reservationId}/initiate',         [PaymentController::class, 'initiate']);
     Route::post('/payments/{reservationId}/select-method',    [PaymentController::class, 'selectMethod']);
     Route::get('/payments/{reservationId}/status',            [PaymentController::class, 'handleCallback']);
+    Route::post('/payments/groups/{groupId}/create-link',     [PaymentController::class, 'createGroupLink']);
+    Route::get('/payments/groups/{groupId}/status',           [PaymentController::class, 'handleGroupCallback']);
 
     // Notifications (read-all must come before {id}/read to avoid route collision)
     Route::get('/notifications',                    [NotificationController::class, 'index']);
@@ -81,6 +96,9 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::put('/admin/reservations/{id}/approve',            [ReservationController::class, 'approve']);
         Route::put('/admin/reservations/{id}/reject',             [ReservationController::class, 'reject']);
         Route::put('/admin/reservations/{id}/complete',           [ReservationController::class, 'complete']);
+        Route::put('/admin/reservations/{id}/notes',              [ReservationController::class, 'updateNotes']);
+        Route::put('/admin/reservations/groups/{groupId}/approve', [ReservationController::class, 'approveGroup']);
+        Route::put('/admin/reservations/groups/{groupId}/reject',  [ReservationController::class, 'rejectGroup']);
     });
 
     // Admin only routes
@@ -103,6 +121,7 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::get('/admin/users',                                [UserController::class, 'index']);
         Route::post('/admin/users',                               [UserController::class, 'store']);
         Route::put('/admin/users/{id}',                           [UserController::class, 'update']);
+        Route::put('/admin/users/{id}/residency',                 [UserController::class, 'verifyResidency']);
         Route::delete('/admin/users/{id}',                        [UserController::class, 'destroy']);
 
         // Analytics

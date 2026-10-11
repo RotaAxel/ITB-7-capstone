@@ -25,6 +25,7 @@ function getSportTheme(name = '') {
   if (n.includes('tennis'))                  return { color: '#84CC16', dark: '#4D7C0F' }
   if (n.includes('baseball'))                return { color: '#78350F', dark: '#451A03' }
   if (n.includes('gym') || n.includes('gymnasium') || n.includes('multi')) return { color: '#6366F1', dark: '#4338CA' }
+  if (n.includes('field'))                   return { color: '#2E8B57', dark: '#1F5C3A' }
   return { color: '#C0392B', dark: '#96281B' }
 }
 

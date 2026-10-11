@@ -13,6 +13,7 @@ class DatabaseSeeder extends Seeder
             ClientSeeder::class,
             MassClientSeeder::class,
             FacilitySeeder::class,
+            OpenFieldSeeder::class,
             AmenitySeeder::class,
             HistoricalDataSeeder::class,
         ]);
