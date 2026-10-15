@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useQuery, useMutation } from '@tanstack/react-query'
 import { toast } from 'sonner'
-import { CheckCircle2, ChevronLeft, ChevronRight, Upload, FileCheck, X } from 'lucide-react'
+import { CheckCircle2, ChevronLeft, ChevronRight, Upload, FileCheck, X, Plus } from 'lucide-react'
 import api from '@/api/axios'
 import { Card, CardContent } from '@/components/ui/Card'
 import Badge from '@/components/ui/Badge'
@@ -19,6 +19,17 @@ const STEPS = ['Schedule', 'Details', 'Review']
 // waste management plan, a crowd management plan, and pre-/post-event
 // considerations. Below it, those fields aren't even shown.
 const LARGE_EVENT_THRESHOLD = 50
+
+// Mirrors ReservationController::EVENT_PACKAGES — purely descriptive, no
+// pricing impact.
+const EVENT_PACKAGES = [
+  'Birthday Event',
+  'Wedding Event',
+  'Corporate Event',
+  'Sports Event',
+  'School Event',
+  'Other',
+]
 
 const fmt12 = t => {
   const [h, m] = t.split(':').map(Number)
@@ -37,12 +48,14 @@ export default function NewReservation() {
     type:                    'reserve',
     facility_id:            preselected || '',
     reservation_date:       '',
-    reservation_dates:      [], // used only when multiDate is on — several dates, same facility/time/details, submitted/approved/paid as one bundle
+    reservation_dates:      [], // used only when multiDate is on — [{date, start_time, end_time}, ...], each date keeping its own time slot, submitted/approved/paid as one bundle
     start_time:             '',
     end_time:               '',
     purpose:                '',
+    event_package:          '', // optional event-type label (Birthday Event, Wedding Event, etc.) — no pricing impact
     number_of_participants: '',
     selected_amenities:     [],
+    amenity_quantities:     {}, // amenity_id => requested quantity, quantifiable amenities only (e.g. chairs)
     waste_management_plan:  '',
     crowd_management_plan:  '',
     event_considerations:   '',
@@ -51,7 +64,7 @@ export default function NewReservation() {
   const [letterFile, setLetterFile] = useState(null)
   const [requestLetterFile, setRequestLetterFile] = useState(null)
   const [multiDate, setMultiDate] = useState(false)
-  const [dateToAdd, setDateToAdd] = useState('')
+  const [slotToAdd, setSlotToAdd] = useState({ date: '', start_time: '', end_time: '' })
 
   const today = new Date().toISOString().split('T')[0]
 
@@ -112,12 +125,28 @@ export default function NewReservation() {
   }
 
   const toggleAmenity = id => {
-    setForm(f => ({
-      ...f,
-      selected_amenities: f.selected_amenities.includes(id)
-        ? f.selected_amenities.filter(x => x !== id)
-        : [...f.selected_amenities, id],
-    }))
+    setForm(f => {
+      const selected = f.selected_amenities.includes(id)
+      const amenity = facilityDetail?.amenities?.find(a => a.id === id)
+      const quantities = { ...f.amenity_quantities }
+      // Quantifiable amenities (chairs, tables) default to 1 the moment they're
+      // checked — the quantity input below lets the client raise that — and the
+      // entry is dropped again when unchecked.
+      if (!selected && amenity?.is_quantifiable) quantities[id] = 1
+      if (selected) delete quantities[id]
+      return {
+        ...f,
+        selected_amenities: selected
+          ? f.selected_amenities.filter(x => x !== id)
+          : [...f.selected_amenities, id],
+        amenity_quantities: quantities,
+      }
+    })
+  }
+
+  const setAmenityQuantity = (id, quantity, max) => {
+    const clamped = Math.max(1, Math.min(Number(quantity) || 1, max))
+    setForm(f => ({ ...f, amenity_quantities: { ...f.amenity_quantities, [id]: clamped } }))
   }
 
   const hasConflict = () => {
@@ -130,23 +159,35 @@ export default function NewReservation() {
   // Multi-date mode has no live per-date conflict preview (the availability
   // endpoint only checks one date at a time) — the server validates every date
   // atomically at submission and reports back which ones, if any, conflict.
+  // Each date keeps its own time slot, so the client can e.g. book 9-11am on
+  // one date and 2-5pm on another within the same bundle.
   const addDate = () => {
-    if (!dateToAdd) return
-    if (dateToAdd < today) {
+    if (!slotToAdd.date || !slotToAdd.start_time || !slotToAdd.end_time) {
+      toast.error('Please fill in the date, start time, and end time.')
+      return
+    }
+    if (slotToAdd.date < today) {
       toast.error('Reservation date cannot be in the past.')
       return
     }
-    if (form.reservation_dates.includes(dateToAdd)) {
+    if (slotToAdd.start_time >= slotToAdd.end_time) {
+      toast.error('End time must be after start time.')
+      return
+    }
+    if (form.reservation_dates.some(s => s.date === slotToAdd.date)) {
       toast.error('That date is already in the list.')
       return
     }
-    setForm(f => ({ ...f, reservation_dates: [...f.reservation_dates, dateToAdd].sort() }))
-    setDateToAdd('')
+    setForm(f => ({
+      ...f,
+      reservation_dates: [...f.reservation_dates, slotToAdd].sort((a, b) => a.date.localeCompare(b.date)),
+    }))
+    setSlotToAdd({ date: '', start_time: '', end_time: '' })
     setErrors(e => ({ ...e, reservation_dates: '' }))
   }
 
   const removeDate = date => {
-    setForm(f => ({ ...f, reservation_dates: f.reservation_dates.filter(d => d !== date) }))
+    setForm(f => ({ ...f, reservation_dates: f.reservation_dates.filter(s => s.date !== date) }))
   }
 
   const validateStep0 = () => {
@@ -157,14 +198,14 @@ export default function NewReservation() {
     } else {
       if (!form.reservation_date) errs.reservation_date = 'Please select a date.'
       else if (form.reservation_date < today) errs.reservation_date = 'Reservation date cannot be in the past.'
-    }
-    if (!form.start_time)       errs.start_time       = 'Please enter a start time.'
-    if (!form.end_time)         errs.end_time         = 'Please enter an end time.'
-    if (form.start_time && form.end_time && form.start_time >= form.end_time) {
-      errs.end_time = 'End time must be after start time.'
-    }
-    if (!multiDate && hasConflict()) {
-      errs.start_time = 'This time slot conflicts with an existing booking.'
+      if (!form.start_time)       errs.start_time       = 'Please enter a start time.'
+      if (!form.end_time)         errs.end_time         = 'Please enter an end time.'
+      if (form.start_time && form.end_time && form.start_time >= form.end_time) {
+        errs.end_time = 'End time must be after start time.'
+      }
+      if (hasConflict()) {
+        errs.start_time = 'This time slot conflicts with an existing booking.'
+      }
     }
     if (facilityDetail?.requires_authorization_letter && !letterFile) {
       errs.authorization_letter = `${facilityDetail.name} requires an authorization letter to be attached.`
@@ -210,18 +251,24 @@ export default function NewReservation() {
       const fd = new FormData()
       fd.append('facility_id',            form.facility_id)
       if (multiDate) {
-        form.reservation_dates.forEach(d => fd.append('reservation_dates[]', d))
+        form.reservation_dates.forEach((slot, i) => {
+          fd.append(`reservation_dates[${i}][date]`,       slot.date)
+          fd.append(`reservation_dates[${i}][start_time]`, slot.start_time)
+          fd.append(`reservation_dates[${i}][end_time]`,   slot.end_time)
+        })
       } else {
-        fd.append('reservation_date',     form.reservation_date)
+        fd.append('reservation_date', form.reservation_date)
+        fd.append('start_time',       form.start_time)
+        fd.append('end_time',         form.end_time)
       }
-      fd.append('start_time',             form.start_time)
-      fd.append('end_time',               form.end_time)
       fd.append('purpose',                form.purpose)
+      fd.append('event_package',          form.event_package)
       fd.append('waste_management_plan',  form.waste_management_plan)
       fd.append('crowd_management_plan',  form.crowd_management_plan)
       fd.append('event_considerations',   form.event_considerations)
       fd.append('number_of_participants', form.number_of_participants)
       form.selected_amenities.forEach(id => fd.append('selected_amenities[]', id))
+      Object.entries(form.amenity_quantities).forEach(([id, qty]) => fd.append(`amenity_quantities[${id}]`, qty))
       fd.append('terms_acknowledged', 'false')
       fd.append('type',                effectiveType)
       if (letterFile)        fd.append('authorization_letter', letterFile)
@@ -234,15 +281,15 @@ export default function NewReservation() {
       facility_id:            Number(form.facility_id),
       ...(multiDate
         ? { reservation_dates: form.reservation_dates }
-        : { reservation_date:  form.reservation_date }),
-      start_time:             form.start_time,
-      end_time:               form.end_time,
+        : { reservation_date: form.reservation_date, start_time: form.start_time, end_time: form.end_time }),
       purpose:                form.purpose,
+      event_package:          form.event_package || null,
       waste_management_plan:  form.waste_management_plan || null,
       crowd_management_plan:  form.crowd_management_plan || null,
       event_considerations:   form.event_considerations || null,
       number_of_participants: Number(form.number_of_participants),
       selected_amenities:     form.selected_amenities,
+      amenity_quantities:     form.amenity_quantities,
       terms_acknowledged:     false,
       type:                   effectiveType,
     })
@@ -254,13 +301,14 @@ export default function NewReservation() {
     ? (new Date(`2000-01-01T${form.end_time}`) - new Date(`2000-01-01T${form.start_time}`)) / 3_600_000
     : 0
 
-  // Each selected amenity ("material") can carry its own flat additional fee —
-  // summed once per selection, not multiplied by its stock quantity. Mirrors the
-  // authoritative calculation in ReservationController::store(); this is only an
-  // estimate for display, so it staying in sync just keeps the preview honest.
+  // Each selected amenity ("material") can carry its own additional fee — flat
+  // per selection for a normal amenity, or per unit × the requested quantity for
+  // a quantifiable one (chairs, tables). Mirrors the authoritative calculation
+  // in ReservationController::store(); this is only an estimate for display, so
+  // it staying in sync just keeps the preview honest.
   const amenitiesFee = activeFacility?.amenities
     ?.filter(a => form.selected_amenities.includes(a.id))
-    .reduce((sum, a) => sum + Number(a.fee ?? 0), 0) ?? 0
+    .reduce((sum, a) => sum + Number(a.fee ?? 0) * (a.is_quantifiable ? (form.amenity_quantities[a.id] ?? 1) : 1), 0) ?? 0
 
   // Mirrors Facility::rateFor() on the backend — a verified Cabuyeño resident
   // pays resident_price_per_hour when the facility has one set, everyone else
@@ -272,12 +320,21 @@ export default function NewReservation() {
         : Number(activeFacility.price_per_hour))
     : 0
 
-  const estimatedCostPerDate = durationHours > 0 && activeFacility
-    ? durationHours * hourlyRate + amenitiesFee
+  // Each date in a bundle can carry its own time slot now, so its duration (and
+  // thus its cost) is computed per-date rather than assumed shared across the
+  // whole bundle — mirrors the per-slot amount calculation in
+  // ReservationController::store().
+  const slotHours = slot => slot.start_time && slot.end_time
+    ? (new Date(`2000-01-01T${slot.end_time}`) - new Date(`2000-01-01T${slot.start_time}`)) / 3_600_000
     : 0
+  const slotCost = slot => {
+    const hours = slotHours(slot)
+    return hours > 0 && activeFacility ? hours * hourlyRate + amenitiesFee : 0
+  }
 
-  const dateCount = multiDate ? Math.max(form.reservation_dates.length, 1) : 1
-  const estimatedCost = estimatedCostPerDate * dateCount
+  const estimatedCost = multiDate
+    ? form.reservation_dates.reduce((sum, slot) => sum + slotCost(slot), 0)
+    : (durationHours > 0 && activeFacility ? durationHours * hourlyRate + amenitiesFee : 0)
 
   return (
     <div className="p-6 max-w-2xl mx-auto">
@@ -497,25 +554,43 @@ export default function NewReservation() {
                 {multiDate ? (
                   <>
                     <p className="text-xs text-[#1C2833] mt-0.5 mb-1.5">
-                      Pick several dates for the same facility and time slot (e.g. every Saturday this
-                      month) — they're submitted, approved, and paid together as one bundle.
+                      Pick several dates for this facility — each date can have its own start and end
+                      time — they're submitted, approved, and paid together as one bundle.
                     </p>
-                    <div className="flex gap-2">
+                    <div className="grid grid-cols-3 gap-2">
                       <Input
                         type="date"
                         min={today}
-                        value={dateToAdd}
-                        onChange={e => setDateToAdd(e.target.value)}
-                        className="flex-1"
+                        value={slotToAdd.date}
+                        onChange={e => setSlotToAdd(s => ({ ...s, date: e.target.value }))}
                       />
-                      <Button type="button" variant="outline" onClick={addDate}>Add</Button>
+                      <Input
+                        type="time"
+                        value={slotToAdd.start_time}
+                        onChange={e => setSlotToAdd(s => ({ ...s, start_time: e.target.value }))}
+                      />
+                      <Input
+                        type="time"
+                        value={slotToAdd.end_time}
+                        onChange={e => setSlotToAdd(s => ({ ...s, end_time: e.target.value }))}
+                      />
                     </div>
+                    <Button type="button" variant="outline" onClick={addDate} className="mt-2 w-full">
+                      <Plus className="h-4 w-4" /> Add Date
+                    </Button>
                     {form.reservation_dates.length > 0 && (
                       <ul className="mt-2 space-y-1">
-                        {form.reservation_dates.map(d => (
-                          <li key={d} className="flex items-center justify-between gap-2 px-3 py-1.5 rounded-lg bg-[#FADBD8]/20 border border-[#F1948A]/20 text-sm">
-                            <span className="text-[#1C2833]">{d}</span>
-                            <button type="button" onClick={() => removeDate(d)} className="text-[#C0392B] hover:text-[#96281B]">
+                        {form.reservation_dates.map(slot => (
+                          <li key={slot.date} className="flex items-center justify-between gap-2 px-3 py-1.5 rounded-lg bg-[#FADBD8]/20 border border-[#F1948A]/20 text-sm">
+                            <span className="text-[#1C2833]">
+                              {slot.date} · {fmt12(slot.start_time)} – {fmt12(slot.end_time)}
+                              {activeFacility && (
+                                <span className="text-[#1E8449] ml-1.5">
+                                  ({slotCost(slot) > 0 ? `₱${slotCost(slot).toLocaleString()}` : 'Free'})
+                                </span>
+                              )}
+                            </span>
+                            <button type="button" onClick={() => removeDate(slot.date)} className="text-[#C0392B] hover:text-[#96281B] shrink-0">
                               <X className="h-3.5 w-3.5" />
                             </button>
                           </li>
@@ -524,6 +599,13 @@ export default function NewReservation() {
                     )}
                     {errors.reservation_dates && (
                       <p className="text-red-500 text-xs mt-1">{errors.reservation_dates}</p>
+                    )}
+                    {form.reservation_dates.length > 0 && (
+                      <div className="mt-2 p-3 bg-[#EAFAF1] rounded-lg border border-[#A9DFBF] text-sm">
+                        <span className="text-[#1E8449] font-medium">
+                          {form.reservation_dates.length} date{form.reservation_dates.length !== 1 ? 's' : ''} — Total Estimated Cost: {estimatedCost > 0 ? `₱${estimatedCost.toLocaleString()}` : 'Free'}
+                        </span>
+                      </div>
                     )}
                   </>
                 ) : (
@@ -543,49 +625,51 @@ export default function NewReservation() {
                 )}
               </div>
 
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <Label>Start Time *</Label>
-                  <Input
-                    type="time"
-                    value={form.start_time}
-                    onChange={e => setField('start_time', e.target.value)}
-                    error={!!errors.start_time}
-                    className="mt-1"
-                  />
-                  {errors.start_time && (
-                    <p className="text-red-500 text-xs mt-1">{errors.start_time}</p>
-                  )}
+              {!multiDate && (
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <Label>Start Time *</Label>
+                    <Input
+                      type="time"
+                      value={form.start_time}
+                      onChange={e => setField('start_time', e.target.value)}
+                      error={!!errors.start_time}
+                      className="mt-1"
+                    />
+                    {errors.start_time && (
+                      <p className="text-red-500 text-xs mt-1">{errors.start_time}</p>
+                    )}
+                  </div>
+                  <div>
+                    <Label>End Time *</Label>
+                    <Input
+                      type="time"
+                      value={form.end_time}
+                      onChange={e => setField('end_time', e.target.value)}
+                      error={!!errors.end_time}
+                      className="mt-1"
+                    />
+                    {errors.end_time && (
+                      <p className="text-red-500 text-xs mt-1">{errors.end_time}</p>
+                    )}
+                  </div>
                 </div>
-                <div>
-                  <Label>End Time *</Label>
-                  <Input
-                    type="time"
-                    value={form.end_time}
-                    onChange={e => setField('end_time', e.target.value)}
-                    error={!!errors.end_time}
-                    className="mt-1"
-                  />
-                  {errors.end_time && (
-                    <p className="text-red-500 text-xs mt-1">{errors.end_time}</p>
-                  )}
-                </div>
-              </div>
+              )}
 
-              {durationHours > 0 && activeFacility && (
+              {!multiDate && durationHours > 0 && activeFacility && (
                 <div className="p-3 bg-[#EAFAF1] rounded-lg border border-[#A9DFBF] text-sm">
                   <span className="text-[#1E8449] font-medium">
-                    Duration: {durationHours}h/date — Estimated Cost: ₱{estimatedCostPerDate.toLocaleString()}
-                    {multiDate && dateCount > 0 && (
-                      <> × {dateCount} date{dateCount !== 1 ? 's' : ''} = ₱{estimatedCost.toLocaleString()} total</>
-                    )}
+                    Duration: {durationHours}h — Estimated Cost: {estimatedCost > 0 ? `₱${estimatedCost.toLocaleString()}` : 'Free'}
                   </span>
                 </div>
               )}
 
               {!multiDate && bookedSlots.length > 0 && (
                 <div className="p-3 bg-[#FEF9E7] rounded-lg border border-[#F9E79F] text-sm">
-                  <p className="font-semibold text-[#B7950B] mb-2">Already booked on this date:</p>
+                  <p className="font-semibold text-[#B7950B] mb-2">
+                    Already booked or blocked on this date
+                    {activeFacility?.buffer_minutes > 0 && ` (includes a ${activeFacility.buffer_minutes}-min prep/cleanup buffer)`}:
+                  </p>
                   <ul className="space-y-1">
                     {bookedSlots.map((s, i) => (
                       <li key={i} className="text-[#B7950B]">
@@ -616,6 +700,18 @@ export default function NewReservation() {
                 {errors.purpose && (
                   <p className="text-red-500 text-xs mt-1">{errors.purpose}</p>
                 )}
+              </div>
+
+              <div>
+                <Label>Event Package <span className="text-[#1C2833] font-normal">(Optional)</span></Label>
+                <select
+                  value={form.event_package}
+                  onChange={e => setField('event_package', e.target.value)}
+                  className="mt-1 block w-full rounded-lg border border-[#E5E7E9] px-3 py-2 text-sm text-[#1C2833] bg-white focus:outline-none focus:ring-2 focus:ring-[#FADBD8] focus:border-[#C0392B]"
+                >
+                  <option value="">None</option>
+                  {EVENT_PACKAGES.map(p => <option key={p} value={p}>{p}</option>)}
+                </select>
               </div>
 
               <div>
@@ -653,28 +749,51 @@ export default function NewReservation() {
                   <div className="mt-2 grid grid-cols-2 gap-2">
                     {facilityDetail.amenities
                       .filter(a => a.is_available)
-                      .map(a => (
-                        <label
-                          key={a.id}
-                          className="flex items-center gap-2.5 p-2.5 rounded-lg border border-gray-200 cursor-pointer hover:bg-gray-50 transition-colors"
-                        >
-                          <input
-                            type="checkbox"
-                            className="rounded border-[#E5E7E9] text-[#C0392B] h-4 w-4"
-                            checked={form.selected_amenities.includes(a.id)}
-                            onChange={() => toggleAmenity(a.id)}
-                          />
-                          <div>
-                            <span className="text-sm text-gray-700 font-medium">{a.name}</span>
-                            <span className="text-xs text-[#1C2833] ml-1">×{a.quantity}</span>
-                            {Number(a.fee) > 0 && (
-                              <span className="block text-xs text-[#C0392B] font-medium">
-                                +₱{Number(a.fee).toLocaleString()}
-                              </span>
+                      .map(a => {
+                        const isSelected = form.selected_amenities.includes(a.id)
+                        // Mirrors Amenity::MAX_QUANTITY_PER_RESERVATION on the backend.
+                        const maxQty = Math.min(a.quantity, 1000)
+                        return (
+                          <div
+                            key={a.id}
+                            className={`rounded-lg border p-2.5 transition-colors ${
+                              isSelected ? 'border-[#C0392B] bg-[#FADBD8]/10' : 'border-gray-200 hover:bg-gray-50'
+                            }`}
+                          >
+                            <label className="flex items-center gap-2.5 cursor-pointer">
+                              <input
+                                type="checkbox"
+                                className="rounded border-[#E5E7E9] text-[#C0392B] h-4 w-4"
+                                checked={isSelected}
+                                onChange={() => toggleAmenity(a.id)}
+                              />
+                              <div>
+                                <span className="text-sm text-gray-700 font-medium">{a.name}</span>
+                                {!a.is_quantifiable && <span className="text-xs text-[#1C2833] ml-1">×{a.quantity}</span>}
+                                {Number(a.fee) > 0 && (
+                                  <span className="block text-xs text-[#C0392B] font-medium">
+                                    +₱{Number(a.fee).toLocaleString()}{a.is_quantifiable ? '/ea' : ''}
+                                  </span>
+                                )}
+                              </div>
+                            </label>
+                            {isSelected && a.is_quantifiable && (
+                              <div className="mt-2 flex items-center gap-2 pl-6">
+                                <span className="text-xs text-[#1C2833]">Qty:</span>
+                                <Input
+                                  type="number"
+                                  min={1}
+                                  max={maxQty}
+                                  value={form.amenity_quantities[a.id] ?? 1}
+                                  onChange={e => setAmenityQuantity(a.id, e.target.value, maxQty)}
+                                  className="w-20 h-8 text-sm"
+                                />
+                                <span className="text-xs text-[#1C2833]">of {maxQty} available</span>
+                              </div>
                             )}
                           </div>
-                        </label>
-                      ))}
+                        )
+                      })}
                   </div>
                 </div>
               )}
@@ -746,21 +865,25 @@ export default function NewReservation() {
                 {[
                   ['Type',         effectiveType === 'book' ? 'Book (instant confirm)' : 'Reserve (requires approval)'],
                   ['Facility',     activeFacility?.name],
-                  multiDate
-                    ? ['Dates',      `${form.reservation_dates.length} dates: ${form.reservation_dates.join(', ')}`]
-                    : ['Date',       form.reservation_date],
-                  ['Time',         `${form.start_time} – ${form.end_time}`],
-                  ['Duration',     `${durationHours}h${multiDate ? '/date' : ''}`],
-                  multiDate
-                    ? ['Est. Cost',    `₱${estimatedCostPerDate.toLocaleString()}/date × ${dateCount} = ₱${estimatedCost.toLocaleString()}`]
-                    : ['Est. Cost',    `₱${estimatedCost.toLocaleString()}`],
+                  ...(multiDate
+                    ? [
+                        ['Dates',    form.reservation_dates.map(s => `${s.date} (${fmt12(s.start_time)}–${fmt12(s.end_time)})`).join(', ')],
+                        ['Est. Cost', estimatedCost > 0 ? `₱${estimatedCost.toLocaleString()} total` : 'Free'],
+                      ]
+                    : [
+                        ['Date',      form.reservation_date],
+                        ['Time',      `${form.start_time} – ${form.end_time}`],
+                        ['Duration',  `${durationHours}h`],
+                        ['Est. Cost', estimatedCost > 0 ? `₱${estimatedCost.toLocaleString()}` : 'Free'],
+                      ]),
                   ['Purpose',      form.purpose],
+                  ...(form.event_package ? [['Event Package', form.event_package]] : []),
                   ['Participants', form.number_of_participants],
                   ['Amenities',
                     form.selected_amenities.length > 0
                       ? facilityDetail?.amenities
                           ?.filter(a => form.selected_amenities.includes(a.id))
-                          .map(a => a.name)
+                          .map(a => a.is_quantifiable ? `${form.amenity_quantities[a.id] ?? 1}× ${a.name}` : a.name)
                           .join(', ')
                       : 'None',
                   ],

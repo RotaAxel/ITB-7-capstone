@@ -14,6 +14,7 @@ class Facility extends Model
         'description',
         'location',
         'capacity',
+        'buffer_minutes',
         'image_path',
         'price_per_hour',
         'resident_price_per_hour',

@@ -54,8 +54,6 @@ export default function GuestPage() {
     queryFn: () => api.get('/public/facilities').then(r => r.data),
   })
 
-  const available = facilities.filter(f => f.status === 'available')
-
   return (
     <div className="min-h-screen bg-white text-[#1C2833]">
 
@@ -79,81 +77,12 @@ export default function GuestPage() {
         </div>
       </nav>
 
-      {/* ── Hero ─────────────────────────────────────────────────────────── */}
-      <section
-        className="relative py-24 px-6 flex items-center justify-center text-center overflow-hidden"
-        style={{ backgroundImage: 'url(/bg.jpg)', backgroundSize: 'cover', backgroundPosition: 'center' }}
-      >
-        <div className="absolute inset-0 bg-[#C0392B]/75" />
-        <div className="relative z-10 max-w-2xl mx-auto">
-          <div className="inline-flex items-center justify-center w-40 h-24 bg-white rounded-2xl mb-6 shadow-xl p-3 border border-white/20">
-            <img src="/logoCabs.png" alt="CABS — Cabuyao Athletes Basic School" className="w-full h-full object-contain" />
-          </div>
-          {/* The page's one semantic <h1> — kept at the tagline's normal weight/size
-              rather than a large bold headline, per feedback that the oversized
-              "Reserve CABS Sports Facilities Online" title was too dominant. */}
-          <h1 className="text-white/80 text-lg font-normal mb-8 max-w-lg mx-auto leading-relaxed">
-            Browse courts, pools, gyms and more. Create a free account to book
-            facilities and manage your reservations anytime, anywhere.
-          </h1>
-          <div className="flex flex-wrap items-center justify-center gap-3">
-            <Link to="/register"
-              className="flex items-center gap-2 bg-white text-[#C0392B] font-bold px-6 py-3 rounded-xl hover:bg-[#FADBD8] transition-colors shadow-lg text-sm">
-              Get Started Free <ArrowRight className="h-4 w-4" />
-            </Link>
-            <Link to="/login"
-              className="flex items-center gap-2 bg-white/20 hover:bg-white/30 text-white font-semibold px-6 py-3 rounded-xl transition-colors text-sm border border-white/30">
-              Sign In
-            </Link>
-          </div>
-        </div>
-      </section>
-
-      {/* ── Stats bar ────────────────────────────────────────────────────── */}
-      <section className="bg-[#C0392B] py-6 px-6">
-        <div className="max-w-4xl mx-auto grid grid-cols-2 sm:grid-cols-4 gap-6 text-center">
-          {[
-            { value: `${facilities.length}+`, label: 'Sports Facilities' },
-            { value: `${available.length}`,   label: 'Available Now'     },
-            { value: 'Free',                  label: 'Registration'      },
-            { value: '24/7',                  label: 'Online Booking'    },
-          ].map(({ value, label }) => (
-            <div key={label}>
-              <p className="text-2xl font-black text-white">{value}</p>
-              <p className="text-white/70 text-xs mt-0.5">{label}</p>
-            </div>
-          ))}
-        </div>
-      </section>
-
-      {/* ── How it works ─────────────────────────────────────────────────── */}
-      <section className="py-16 px-6 bg-[#FADBD8]/20">
-        <div className="max-w-5xl mx-auto">
-          <div className="text-center mb-12">
-            <h2 className="text-2xl font-bold text-[#1C2833]">How It Works</h2>
-            <p className="text-[#1C2833] text-sm mt-2">Get started in three simple steps</p>
-          </div>
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-8">
-            {STEPS.map(({ icon: Icon, step, title, desc }) => (
-              <div key={step} className="text-center">
-                <div className="relative inline-flex items-center justify-center w-16 h-16 bg-[#C0392B] rounded-2xl mb-4 shadow-md">
-                  <Icon className="h-7 w-7 text-white" />
-                  <span className="absolute -top-2 -right-2 w-6 h-6 bg-white border-2 border-[#C0392B] rounded-full flex items-center justify-center text-[10px] font-black text-[#C0392B]">{step}</span>
-                </div>
-                <h3 className="font-bold text-[#1C2833] mb-2">{title}</h3>
-                <p className="text-[#1C2833] text-sm leading-relaxed">{desc}</p>
-              </div>
-            ))}
-          </div>
-        </div>
-      </section>
-
       {/* ── Facilities ───────────────────────────────────────────────────── */}
       <section className="py-16 px-6">
         <div className="max-w-6xl mx-auto">
           <div className="flex items-end justify-between mb-8">
             <div>
-              <h2 className="text-2xl font-bold text-[#1C2833]">Our Facilities</h2>
+              <h1 className="text-2xl font-bold text-[#1C2833]">Our Facilities</h1>
               <p className="text-[#1C2833] text-sm mt-1">Browse all available sports facilities</p>
             </div>
             <Link to="/register" className="text-sm text-[#C0392B] font-semibold hover:underline flex items-center gap-1">
@@ -230,6 +159,28 @@ export default function GuestPage() {
               ))}
             </div>
           )}
+        </div>
+      </section>
+
+      {/* ── How it works ─────────────────────────────────────────────────── */}
+      <section className="py-16 px-6 bg-[#FADBD8]/20">
+        <div className="max-w-5xl mx-auto">
+          <div className="text-center mb-12">
+            <h2 className="text-2xl font-bold text-[#1C2833]">How It Works</h2>
+            <p className="text-[#1C2833] text-sm mt-2">Get started in three simple steps</p>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-8">
+            {STEPS.map(({ icon: Icon, step, title, desc }) => (
+              <div key={step} className="text-center">
+                <div className="relative inline-flex items-center justify-center w-16 h-16 bg-[#C0392B] rounded-2xl mb-4 shadow-md">
+                  <Icon className="h-7 w-7 text-white" />
+                  <span className="absolute -top-2 -right-2 w-6 h-6 bg-white border-2 border-[#C0392B] rounded-full flex items-center justify-center text-[10px] font-black text-[#C0392B]">{step}</span>
+                </div>
+                <h3 className="font-bold text-[#1C2833] mb-2">{title}</h3>
+                <p className="text-[#1C2833] text-sm leading-relaxed">{desc}</p>
+              </div>
+            ))}
+          </div>
         </div>
       </section>
 

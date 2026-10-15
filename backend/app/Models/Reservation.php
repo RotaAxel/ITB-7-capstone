@@ -14,6 +14,7 @@ class Reservation extends Model
         'facility_id',
         'reservation_group_id',
         'purpose',
+        'event_package',
         'waste_management_plan',
         'crowd_management_plan',
         'event_considerations',
@@ -29,6 +30,7 @@ class Reservation extends Model
         'reviewed_by',
         'reviewed_at',
         'selected_amenities',
+        'amenity_quantities',
         'terms_acknowledged',
         'terms_acknowledged_at',
         'authorization_letter_path',
@@ -39,6 +41,7 @@ class Reservation extends Model
     {
         return [
             'selected_amenities' => 'array',
+            'amenity_quantities' => 'array',
             'terms_acknowledged' => 'boolean',
             'is_priority' => 'boolean',
             'reservation_date' => 'date',

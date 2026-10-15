@@ -25,6 +25,7 @@ const TYPE_META = {
   new_reservation:        { icon: Bell,          color: 'text-[#C0392B] bg-[#FADBD8]' },
   ADMIN_PAYMENT_RECEIVED: { icon: DollarSign,    color: 'text-[#1E8449] bg-[#EAFAF1]' },
   payment_received:       { icon: DollarSign,    color: 'text-[#1E8449] bg-[#EAFAF1]' },
+  residency_proof:        { icon: ClipboardList, color: 'text-[#B7950B] bg-[#FEF9E7]' },
 }
 
 function getRoute(n, role) {
@@ -45,6 +46,7 @@ function getRoute(n, role) {
     case 'MAINTENANCE_ALERT':      return fid ? `/facilities/${fid}` : '/facilities'
     case 'ADMIN_PAYMENT_RECEIVED':
     case 'payment_received':       return '/admin/reservations'
+    case 'residency_proof':        return isAdmin ? '/admin/users' : '/profile'
     default:                       return '/notifications'
   }
 }

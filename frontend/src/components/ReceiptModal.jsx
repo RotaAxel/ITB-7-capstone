@@ -56,10 +56,15 @@ function ReceiptBody({ reservation: r }) {
 
   // r.facility.amenities is the facility's full amenity list (not just what was
   // selected) — narrow it down to the ones actually chosen on this reservation,
+  // and resolve each quantifiable one's requested count (r.amenity_quantities)
   // so the fee each one added can be itemized against the total paid.
   const selectedAmenities = (r.facility?.amenities ?? [])
     .filter(a => (r.selected_amenities ?? []).includes(a.id))
-  const amenitiesFee = selectedAmenities.reduce((sum, a) => sum + Number(a.fee ?? 0), 0)
+    .map(a => {
+      const quantity = a.is_quantifiable ? Number(r.amenity_quantities?.[a.id] ?? 1) : null
+      return { ...a, quantity, lineTotal: Number(a.fee ?? 0) * (quantity ?? 1) }
+    })
+  const amenitiesFee = selectedAmenities.reduce((sum, a) => sum + a.lineTotal, 0)
   const facilitySubtotal = r.payment ? Number(r.payment.amount) - amenitiesFee : 0
   // Purely a display label — the discount (if any) is already baked into
   // r.payment.amount from the moment the reservation was created.
@@ -121,9 +126,11 @@ function ReceiptBody({ reservation: r }) {
               <ul className="space-y-1.5 text-sm">
                 {selectedAmenities.map(a => (
                   <li key={a.id} className="flex justify-between">
-                    <span className="text-gray-700">{a.name}</span>
+                    <span className="text-gray-700">
+                      {a.is_quantifiable ? `${a.quantity}× ${a.name} (₱${Number(a.fee).toLocaleString()}/ea)` : a.name}
+                    </span>
                     <span className="text-gray-900 font-medium">
-                      {Number(a.fee) > 0 ? `+₱${Number(a.fee).toLocaleString()}` : 'Included'}
+                      {a.lineTotal > 0 ? `+₱${a.lineTotal.toLocaleString()}` : 'Included'}
                     </span>
                   </li>
                 ))}

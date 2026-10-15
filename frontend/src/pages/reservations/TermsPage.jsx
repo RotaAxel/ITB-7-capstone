@@ -98,12 +98,38 @@ export default function TermsPage() {
     queryFn: () => api.get(`/reservations/${id}`).then(r => r.data),
   })
 
+  // A reservation that's part of a multi-date bundle has N sibling rows, each
+  // with its own terms_acknowledged flag — acknowledging just this one (the
+  // single-reservation endpoint) would leave the rest unacknowledged and block
+  // the group's payment later, so a grouped reservation goes through the group
+  // endpoint instead, which applies to every date at once.
+  const groupId = reservation?.reservation_group_id
+
   const acknowledgeMutation = useMutation({
-    mutationFn: () => api.post(`/reservations/${id}/acknowledge-terms`),
-    onSuccess: () => {
-      toast.success('Terms acknowledged. Proceeding to payment.')
+    mutationFn: () => groupId
+      ? api.post(`/reservations/groups/${groupId}/acknowledge-terms`)
+      : api.post(`/reservations/${id}/acknowledge-terms`),
+    onSuccess: res => {
       queryClient.invalidateQueries({ queryKey: ['reservation', id] })
+      queryClient.invalidateQueries({ queryKey: ['reservation-group', groupId] })
       queryClient.invalidateQueries({ queryKey: ['reservations'] })
+
+      if (groupId) {
+        toast.success('Terms acknowledged for all dates in this bundle.')
+        navigate(`/reservations/group/${groupId}`, { replace: true })
+        return
+      }
+
+      // A free facility (see Facility::rateFor()) confirms immediately once terms
+      // are acknowledged — there's no payment step to send the client to in that
+      // case, so route to the reservation itself instead of straight to payment.
+      if (res.data.reservation?.status === 'confirmed') {
+        toast.success("Terms acknowledged — this facility is free, so your reservation is already confirmed!")
+        navigate(`/reservations/${id}`, { replace: true })
+        return
+      }
+
+      toast.success('Terms acknowledged. Proceeding to payment.')
       navigate(`/reservations/${id}/payment`, { replace: true })
     },
     onError: () => toast.error('Failed to acknowledge terms.'),
@@ -112,13 +138,21 @@ export default function TermsPage() {
   if (isLoading) return <div className="flex justify-center py-16"><Spinner size="lg" /></div>
 
   if (reservation?.terms_acknowledged) {
+    // A free facility confirms on its own once terms are in and (for "reserve")
+    // it's approved — nothing left to pay, so there's no payment page to send
+    // the client to in that case.
+    const alreadyConfirmed = reservation.status === 'confirmed' && reservation.payment?.payment_method === 'free'
     return (
       <div className="p-6 max-w-2xl mx-auto text-center py-20">
         <CheckCircle2 className="h-14 w-14 text-green-500 mx-auto mb-3" />
         <h2 className="text-xl font-bold text-gray-900 mb-2">Terms Already Acknowledged</h2>
-        <p className="text-[#1C2833] mb-6">You have already agreed to the terms and conditions.</p>
-        <Link to={`/reservations/${id}/payment`} replace>
-          <Button>Proceed to Payment</Button>
+        <p className="text-[#1C2833] mb-6">
+          {alreadyConfirmed
+            ? 'You have already agreed to the terms and conditions — this facility is free, so your reservation is confirmed.'
+            : 'You have already agreed to the terms and conditions.'}
+        </p>
+        <Link to={alreadyConfirmed ? `/reservations/${id}` : (groupId ? `/reservations/group/${groupId}` : `/reservations/${id}/payment`)} replace>
+          <Button>{alreadyConfirmed ? 'View Reservation' : 'Proceed to Payment'}</Button>
         </Link>
       </div>
     )

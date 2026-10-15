@@ -65,14 +65,30 @@ class FacilityController extends Controller
     {
         $request->validate(['date' => ['required', 'date']]);
 
-        Facility::findOrFail($id);
+        $facility = Facility::findOrFail($id);
 
         $slots = Reservation::where('facility_id', $id)
             ->where('reservation_date', $request->date)
             ->whereIn('status', ['pending', 'approved', 'confirmed'])
             ->select('start_time', 'end_time', 'status')
             ->orderBy('start_time')
-            ->get();
+            ->get()
+            // Padded by the facility's cleaning/setup buffer on both sides so what
+            // the client sees as "already booked" matches what store()'s conflict
+            // check will actually reject — otherwise a slot that looks free here
+            // could still get rejected at submission time.
+            ->map(function ($slot) use ($facility) {
+                $start = \Carbon\Carbon::createFromFormat('H:i:s', $slot->start_time)
+                    ->subMinutes($facility->buffer_minutes);
+                $end = \Carbon\Carbon::createFromFormat('H:i:s', $slot->end_time)
+                    ->addMinutes($facility->buffer_minutes);
+
+                return [
+                    'start_time' => $start->format('H:i:s'),
+                    'end_time'   => $end->format('H:i:s'),
+                    'status'     => $slot->status,
+                ];
+            });
 
         return response()->json($slots);
     }
@@ -86,6 +102,9 @@ class FacilityController extends Controller
             'description'   => ['required', 'string'],
             'location'      => ['required', 'string', 'max:255'],
             'capacity'      => ['required', 'integer', 'min:1'],
+            // Minutes blocked before/after every reservation for cleaning/setup —
+            // see the migration that added this column.
+            'buffer_minutes' => ['nullable', 'integer', 'min:0', 'max:480'],
             'price_per_hour'=> ['required', 'numeric', 'min:0'],
             // Discounted rate for verified Cabuyeño residents — null/omitted means
             // no resident discount, everyone pays price_per_hour.
@@ -127,6 +146,7 @@ class FacilityController extends Controller
             'description'    => $validated['description'],
             'location'       => $validated['location'],
             'capacity'       => $validated['capacity'],
+            'buffer_minutes' => $validated['buffer_minutes'] ?? 30,
             'price_per_hour' => $validated['price_per_hour'],
             'resident_price_per_hour' => $validated['resident_price_per_hour'] ?? null,
             'status'         => $validated['status'] ?? 'available',
@@ -152,6 +172,7 @@ class FacilityController extends Controller
             'description'   => ['sometimes', 'string'],
             'location'      => ['sometimes', 'string', 'max:255'],
             'capacity'      => ['sometimes', 'integer', 'min:1'],
+            'buffer_minutes' => ['nullable', 'integer', 'min:0', 'max:480'],
             'price_per_hour'=> ['sometimes', 'numeric', 'min:0'],
             'resident_price_per_hour' => ['nullable', 'numeric', 'min:0'],
             'status'        => ['sometimes', 'in:available,under_maintenance,unavailable'],
@@ -258,10 +279,13 @@ class FacilityController extends Controller
             'facility_id'  => ['required', 'exists:facilities,id'],
             'name'         => ['required', 'string', 'max:255'],
             'description'  => ['nullable', 'string'],
-            'quantity'     => ['required', 'integer', 'min:1'],
-            // Flat per-selection charge, not multiplied by quantity — see the
-            // migration that added this column.
+            // Also the stock ceiling for a quantifiable amenity — capped at 1000
+            // regardless (see Amenity::MAX_QUANTITY_PER_RESERVATION).
+            'quantity'     => ['required', 'integer', 'min:1', 'max:1000'],
+            // Flat per-selection charge for a normal amenity; *per unit* when
+            // is_quantifiable is true — see the migration that added that column.
             'fee'          => ['nullable', 'numeric', 'min:0'],
+            'is_quantifiable' => ['boolean'],
             'is_available' => ['boolean'],
         ]);
 
@@ -277,8 +301,9 @@ class FacilityController extends Controller
         $validated = $request->validate([
             'name'         => ['sometimes', 'string', 'max:255'],
             'description'  => ['nullable', 'string'],
-            'quantity'     => ['sometimes', 'integer', 'min:1'],
+            'quantity'     => ['sometimes', 'integer', 'min:1', 'max:1000'],
             'fee'          => ['nullable', 'numeric', 'min:0'],
+            'is_quantifiable' => ['boolean'],
             'is_available' => ['boolean'],
         ]);
 

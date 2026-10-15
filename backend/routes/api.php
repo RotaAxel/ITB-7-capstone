@@ -70,6 +70,7 @@ Route::middleware('auth:sanctum')->group(function () {
     // routes above (which only ever match one segment).
     Route::get('/reservations/groups/{groupId}',               [ReservationController::class, 'showGroup']);
     Route::post('/reservations/groups/{groupId}/cancel',       [ReservationController::class, 'cancelGroup']);
+    Route::post('/reservations/groups/{groupId}/acknowledge-terms', [ReservationController::class, 'acknowledgeTermsGroup']);
 
     // Payments
     Route::post('/payments/{reservationId}/create-link',      [PaymentController::class, 'createLink']);

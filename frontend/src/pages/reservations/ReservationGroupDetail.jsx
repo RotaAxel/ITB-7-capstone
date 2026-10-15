@@ -56,15 +56,18 @@ export default function ReservationGroupDetail() {
   const readyForPayment = type === 'reserve'
     ? reservations.every(r => r.status === 'approved')
     : reservations.every(r => r.status === 'pending')
-  const canCancel = reservations.every(r => ['pending', 'approved'].includes(r.status) && r.payment?.status !== 'paid')
-  const needTerms = readyForPayment && !first.terms_acknowledged && reservations.some(r => r.payment?.status !== 'paid')
-  const canPay    = readyForPayment && first.terms_acknowledged && reservations.some(r => r.payment?.status !== 'paid')
+  // A free facility (see Facility::rateFor()) marks every member's Payment
+  // 'paid' the moment the bundle is created — amount ₱0, nothing real to
+  // collect — while the reservations themselves can still be sitting at
+  // 'pending'/'approved' waiting on terms (or, for "reserve", admin approval).
+  // That's not the same as an actual completed payment, so it shouldn't block
+  // cancelling or hide the terms step the way a real payment would.
+  const isRealPayment = r => r.payment?.status === 'paid' && r.payment?.payment_method !== 'free'
+  const canCancel = reservations.every(r => ['pending', 'approved'].includes(r.status) && !isRealPayment(r))
+  const needTerms = readyForPayment && !first.terms_acknowledged
+  const canPay    = readyForPayment && first.terms_acknowledged && reservations.some(r => !isRealPayment(r))
   const allPaid   = reservations.every(r => r.payment?.status === 'paid')
   const awaitingConfirmation = reservations.every(r => r.status === 'pending') && reservations.some(r => r.payment?.status === 'paid')
-
-  const duration = first.start_time && first.end_time
-    ? (new Date(`2000-01-01T${first.end_time}`) - new Date(`2000-01-01T${first.start_time}`)) / 3_600_000
-    : null
 
   return (
     <div className="p-6 max-w-3xl mx-auto">
@@ -97,9 +100,8 @@ export default function ReservationGroupDetail() {
             <dl className="divide-y divide-gray-100 text-sm">
               {[
                 ['Facility',     first.facility?.name],
-                ['Time',         first.start_time && first.end_time ? `${first.start_time.slice(0, 5)} – ${first.end_time.slice(0, 5)}` : '—'],
-                ['Duration',     duration != null ? `${duration}h / date` : '—'],
                 ['Purpose',      first.purpose],
+                ...(first.event_package ? [['Event Package', first.event_package]] : []),
                 ['Participants', first.number_of_participants],
                 ...(first.waste_management_plan ? [['Waste Management', first.waste_management_plan]] : []),
                 ...(first.crowd_management_plan ? [['Crowd Management', first.crowd_management_plan]] : []),
@@ -144,7 +146,10 @@ export default function ReservationGroupDetail() {
                     <p className="font-medium text-gray-900">
                       {r.reservation_date ? format(parseISO(r.reservation_date), 'EEEE, MMM d, yyyy') : '—'}
                     </p>
-                    <p className="text-xs text-[#1C2833]">₱{Number(r.payment?.amount ?? 0).toLocaleString()}</p>
+                    <p className="text-xs text-[#1C2833]">
+                      {r.start_time && r.end_time ? `${r.start_time.slice(0, 5)} – ${r.end_time.slice(0, 5)}` : '—'}
+                      {' · '}₱{Number(r.payment?.amount ?? 0).toLocaleString()}
+                    </p>
                   </div>
                   <div className="flex items-center gap-2 shrink-0">
                     <Badge status={r.status} />

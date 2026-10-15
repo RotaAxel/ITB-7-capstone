@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Mail\VerificationCodeMail;
 use App\Models\User;
+use App\Services\NotificationService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Hash;
@@ -48,6 +49,11 @@ class AuthController extends Controller
             'gender'         => ['nullable', 'in:male,female,other'],
             'address'        => ['nullable', 'string'],
             'contact_number' => ['nullable', 'regex:' . self::PH_MOBILE_REGEX],
+            // Optional even here — proof of Cabuyao residency (barangay
+            // certificate / valid ID) can also be submitted later from the
+            // profile page (see uploadResidencyProof below). Letting it travel
+            // with registration just saves a trip for anyone who has it ready.
+            'residency_proof' => ['nullable', 'file', 'mimes:pdf,jpg,jpeg,png', 'max:5120'],
         ], [
             'full_name.regex'      => 'Full name may only contain letters.',
             'contact_number.regex' => 'Enter a valid PH mobile number.',
@@ -64,6 +70,10 @@ class AuthController extends Controller
             'role'           => 'client',
             'is_verified'    => false,
         ]);
+
+        if ($request->hasFile('residency_proof')) {
+            $this->storeResidencyProof($user, $request->file('residency_proof'));
+        }
 
         $this->issueAndSendVerificationCode($user);
 
@@ -239,21 +249,19 @@ class AuthController extends Controller
 
     // Proof of Cabuyao residency (barangay certificate / valid ID) — uploading it
     // doesn't grant the resident discount by itself; an admin has to review it and
-    // mark the account verified (see UserController::verifyResidency).
-    public function uploadResidencyProof(Request $request)
+    // mark the account verified (see UserController::verifyResidency). Shared by
+    // both the registration form (optional, up front) and this profile-page
+    // upload (also optional, anytime after) — same file handling and admin
+    // notification either way.
+    private function storeResidencyProof(User $user, $file): void
     {
-        $request->validate([
-            'residency_proof' => ['required', 'file', 'mimes:pdf,jpg,jpeg,png', 'max:5120'],
-        ]);
-
-        $user = $request->user();
-
-        // Don't leave the previous file orphaned on disk when replacing it.
+        // Don't leave a previous file orphaned on disk when replacing it (never
+        // applies at registration time — a brand new user has none yet).
         if ($user->residency_proof_path) {
             Storage::disk('local')->delete($user->residency_proof_path);
         }
 
-        $path = $request->file('residency_proof')->store('residency-proofs', 'local');
+        $path = $file->store('residency-proofs', 'local');
 
         $user->update([
             'residency_proof_path' => $path,
@@ -264,7 +272,22 @@ class AuthController extends Controller
             'residency_admin_note' => null,
         ]);
 
-        return response()->json($user->fresh());
+        NotificationService::notifyAdmins(
+            'residency_proof',
+            'New Residency Proof Submitted',
+            "{$user->full_name} submitted a residency proof for Cabuyeño verification."
+        );
+    }
+
+    public function uploadResidencyProof(Request $request)
+    {
+        $request->validate([
+            'residency_proof' => ['required', 'file', 'mimes:pdf,jpg,jpeg,png', 'max:5120'],
+        ]);
+
+        $this->storeResidencyProof($request->user(), $request->file('residency_proof'));
+
+        return response()->json($request->user()->fresh());
     }
 
     public function downloadResidencyProof(Request $request, $id)

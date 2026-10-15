@@ -118,9 +118,15 @@ export default function Dashboard() {
                   <div className="p-4">
                     <p className="font-semibold text-base text-[#1C2833] truncate">{f.name}</p>
                     <p className="text-sm text-[#1C2833] mt-1">
-                      ₱{Number(f.price_per_hour).toLocaleString()}/hr
-                      {f.resident_price_per_hour != null && (
-                        <span className="text-[#1E8449]"> (₱{Number(f.resident_price_per_hour).toLocaleString()} Cabuyeño)</span>
+                      {Number(f.price_per_hour) === 0 ? (
+                        <span className="text-[#1E8449] font-semibold">Free</span>
+                      ) : (
+                        <>
+                          ₱{Number(f.price_per_hour).toLocaleString()}/hr
+                          {f.resident_price_per_hour != null && (
+                            <span className="text-[#1E8449]"> (₱{Number(f.resident_price_per_hour).toLocaleString()} Cabuyeño)</span>
+                          )}
+                        </>
                       )}
                     </p>
                     <Button size="lg" className="w-full mt-3 !text-base !py-3 font-bold" onClick={() => openModal(f.id)}>Reserve</Button>

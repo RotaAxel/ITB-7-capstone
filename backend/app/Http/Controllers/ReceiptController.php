@@ -26,13 +26,31 @@ class ReceiptController extends Controller
         // Build selected amenities list, and split the paid amount into its two
         // components (facility rental vs. amenities/materials fees) purely for
         // display — the actual charged amount always comes from $payment->amount.
+        // A quantifiable amenity (chairs, tables) shows how many were actually
+        // requested and its per-unit fee × that count; a normal one just shows its
+        // flat fee — never the facility's own stock quantity, which isn't what was
+        // billed.
         $amenities = [];
         $amenitiesFee = 0;
         if ($reservation->selected_amenities) {
+            $requestedQuantities = $reservation->amenity_quantities ?? [];
             $amenities = \App\Models\Amenity::whereIn('id', $reservation->selected_amenities)
-                ->get(['id', 'name', 'quantity', 'fee'])
+                ->get(['id', 'name', 'fee', 'is_quantifiable'])
+                ->map(function ($a) use ($requestedQuantities, &$amenitiesFee) {
+                    $qty = $a->is_quantifiable ? (int) ($requestedQuantities[$a->id] ?? 1) : null;
+                    $lineTotal = (float) $a->fee * ($qty ?? 1);
+                    $amenitiesFee += $lineTotal;
+
+                    return [
+                        'id'                 => $a->id,
+                        'name'               => $a->name,
+                        'fee'                => (float) $a->fee,
+                        'is_quantifiable'    => $a->is_quantifiable,
+                        'requested_quantity' => $qty,
+                        'line_total'         => $lineTotal,
+                    ];
+                })
                 ->toArray();
-            $amenitiesFee = collect($amenities)->sum('fee');
         }
         $facilitySubtotal = round($payment->amount - $amenitiesFee, 2);
 

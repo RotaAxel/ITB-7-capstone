@@ -130,11 +130,17 @@ export default function FacilityDetail() {
 
               <div className="flex items-center gap-2 text-sm text-gray-600">
                 <Clock className="h-4 w-4 text-[#1C2833] shrink-0" />
-                ₱{Number(facility.price_per_hour).toLocaleString()} / hour
-                {facility.resident_price_per_hour != null && (
-                  <span className="text-[#1E8449]">
-                    (₱{Number(facility.resident_price_per_hour).toLocaleString()} / hour for verified Cabuyeño residents)
-                  </span>
+                {Number(facility.price_per_hour) === 0 ? (
+                  <span className="text-[#1E8449] font-semibold">Free</span>
+                ) : (
+                  <>
+                    ₱{Number(facility.price_per_hour).toLocaleString()} / hour
+                    {facility.resident_price_per_hour != null && (
+                      <span className="text-[#1E8449]">
+                        (₱{Number(facility.resident_price_per_hour).toLocaleString()} / hour for verified Cabuyeño residents)
+                      </span>
+                    )}
+                  </>
                 )}
               </div>
 

@@ -95,8 +95,14 @@
         @foreach($amenities as $amenity)
             <table class="row small">
                 <tr>
-                    <td>{{ $amenity['quantity'] }}x {{ $amenity['name'] }}</td>
-                    <td class="value">{{ $amenity['fee'] > 0 ? '+&#8369;' . number_format($amenity['fee'], 2) : '' }}</td>
+                    <td>
+                        @if($amenity['is_quantifiable'])
+                            {{ $amenity['requested_quantity'] }}x {{ $amenity['name'] }} (&#8369;{{ number_format($amenity['fee'], 2) }}/ea)
+                        @else
+                            {{ $amenity['name'] }}
+                        @endif
+                    </td>
+                    <td class="value">{{ $amenity['line_total'] > 0 ? '+&#8369;' . number_format($amenity['line_total'], 2) : '' }}</td>
                 </tr>
             </table>
         @endforeach

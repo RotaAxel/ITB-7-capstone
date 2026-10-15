@@ -76,9 +76,16 @@ export default function ReservationDetailModal({ reservationId, onClose }) {
   const awaitingAdminApproval = r && r.type === 'reserve' && r.status === 'pending'
   const readyForPayment       = r && (r.type === 'reserve' ? r.status === 'approved' : r.status === 'pending')
 
-  const canCancel = r && ['pending', 'approved'].includes(r.status) && r.payment?.status !== 'paid'
-  const needTerms = readyForPayment && !r.terms_acknowledged && r.payment?.status !== 'paid'
-  const canPay    = readyForPayment && r.terms_acknowledged && r.payment?.status !== 'paid'
+  // A free facility (see Facility::rateFor()) marks its Payment 'paid' the
+  // moment the reservation is created — amount ₱0, nothing real to collect —
+  // while the reservation itself can still be sitting at 'pending'/'approved'
+  // waiting on terms (or, for "reserve", admin approval). That's not the same
+  // as an actual completed payment, so it shouldn't block cancelling or hide
+  // the terms step the way a real payment would.
+  const isRealPayment = r && r.payment?.status === 'paid' && r.payment?.payment_method !== 'free'
+  const canCancel = r && ['pending', 'approved'].includes(r.status) && !isRealPayment
+  const needTerms = readyForPayment && !r.terms_acknowledged
+  const canPay    = readyForPayment && r.terms_acknowledged && !isRealPayment
   const hasPaid   = r && r.payment?.status === 'paid'
   const awaitingApproval = r && r.status === 'pending' && hasPaid
 
@@ -168,6 +175,7 @@ export default function ReservationDetailModal({ reservationId, onClose }) {
                     ['Time',         r.start_time && r.end_time ? `${r.start_time.slice(0, 5)} – ${r.end_time.slice(0, 5)}` : '—'],
                     ['Duration',     duration != null ? `${duration}h` : '—'],
                     ['Purpose',      r.purpose],
+                    ...(r.event_package ? [['Event Package', r.event_package]] : []),
                     ['Participants', r.number_of_participants],
                     ...(r.waste_management_plan ? [['Waste Management', r.waste_management_plan]] : []),
                     ...(r.crowd_management_plan ? [['Crowd Management', r.crowd_management_plan]] : []),

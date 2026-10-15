@@ -8,7 +8,7 @@ import Input  from '@/components/ui/Input'
 import Label  from '@/components/ui/Label'
 import Alert  from '@/components/ui/Alert'
 import PasswordStrengthMeter from '@/components/ui/PasswordStrengthMeter'
-import { CheckCircle2, Eye, EyeOff, UserPlus } from 'lucide-react'
+import { CheckCircle2, Eye, EyeOff, UserPlus, Upload, FileCheck, X } from 'lucide-react'
 
 // Letters (incl. accented), spaces, and the handful of punctuation marks real
 // names use (O'Brien, dela Cruz, St. James) — no digits or other symbols.
@@ -42,6 +42,7 @@ export default function Register() {
   const [success,   setSuccess]    = useState(false)
   const [showPass,  setShowPass]   = useState(false)
   const [showPass2, setShowPass2]  = useState(false)
+  const [residencyFile, setResidencyFile] = useState(null)
 
   const {
     register,
@@ -55,7 +56,7 @@ export default function Register() {
 
   const onSubmit = async (data) => {
     setApiError('')
-    const payload = {
+    const fields = {
       ...data,
       age:            data.age    || undefined,
       gender:         data.gender || undefined,
@@ -63,6 +64,19 @@ export default function Register() {
       // stitch it back on here so the backend gets the full E.164-ish number.
       contact_number: data.contact_number ? `+63${data.contact_number}` : undefined,
     }
+
+    // Only switch to multipart when a residency proof was attached — keeps the
+    // plain-JSON path (every other registration) untouched.
+    let payload = fields
+    if (residencyFile) {
+      const fd = new FormData()
+      Object.entries(fields).forEach(([key, value]) => {
+        if (value !== undefined && value !== null) fd.append(key, value)
+      })
+      fd.append('residency_proof', residencyFile)
+      payload = fd
+    }
+
     const result = await authRegister(payload)
 
     if (!result.success) {
@@ -269,6 +283,37 @@ export default function Register() {
                   className="block w-full rounded-lg border border-[#FADBD8] px-3 py-2 text-sm text-[#1C2833] bg-white placeholder-[#717D7E] focus:outline-none focus:ring-2 focus:ring-[#FADBD8] focus:border-[#C0392B] resize-none"
                   {...register('address')}
                 />
+              </div>
+
+              <div>
+                <Label>Proof of Cabuyeño Residency <span className="text-[#1C2833] font-normal">(Optional)</span></Label>
+                <p className="text-xs text-[#1C2833] mt-0.5 mb-1.5">
+                  Upload a barangay certificate or valid ID showing a Cabuyao address to qualify for the
+                  discounted Cabuyeño rate on facilities that offer one. An admin reviews it before it
+                  takes effect — you can also submit this later from your profile.
+                </p>
+                {residencyFile ? (
+                  <div className="flex items-center justify-between gap-2 p-2.5 rounded-lg border border-[#A9DFBF] bg-[#EAFAF1]">
+                    <span className="flex items-center gap-2 min-w-0 text-sm text-[#1E8449]">
+                      <FileCheck className="h-4 w-4 shrink-0" />
+                      <span className="truncate">{residencyFile.name}</span>
+                    </span>
+                    <button type="button" onClick={() => setResidencyFile(null)} className="p-1 rounded text-[#1E8449] hover:bg-[#D5F5E3] shrink-0">
+                      <X className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                ) : (
+                  <label className="flex flex-col items-center justify-center gap-1.5 py-5 rounded-lg border-2 border-dashed border-[#E5E7E9] cursor-pointer hover:bg-gray-50 transition-colors">
+                    <Upload className="h-5 w-5 text-[#1C2833]" />
+                    <span className="text-sm text-[#1C2833]">Click to upload — PDF, JPG, or PNG (max 5MB)</span>
+                    <input
+                      type="file"
+                      accept=".pdf,.jpg,.jpeg,.png"
+                      className="hidden"
+                      onChange={e => { const file = e.target.files[0]; if (file) setResidencyFile(file) }}
+                    />
+                  </label>
+                )}
               </div>
 
               <button

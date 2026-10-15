@@ -14,7 +14,7 @@ import Modal from '@/components/ui/Modal'
 import SearchAutocomplete from '@/components/ui/SearchAutocomplete'
 
 const BLANK_FACILITY = {
-  name: '', description: '', location: '', capacity: '', price_per_hour: '', resident_price_per_hour: '', status: 'available',
+  name: '', description: '', location: '', capacity: '', buffer_minutes: 30, price_per_hour: '', resident_price_per_hour: '', status: 'available',
   requires_authorization_letter: false,
   requires_request_letter: false,
   what_to_bring: '', restrictions: '', additional_terms: '',
@@ -25,7 +25,7 @@ const BLANK_MAINTENANCE = {
   status: 'under_maintenance', maintenance_note: '', maintenance_start: '', maintenance_end: '',
 }
 
-const BLANK_AMENITY = { name: '', description: '', quantity: 1, fee: '', is_available: true }
+const BLANK_AMENITY = { name: '', description: '', quantity: 1, fee: '', is_quantifiable: false, is_available: true }
 
 const FILTERS = [
   { value: 'all',               label: 'All'         },
@@ -249,6 +249,7 @@ export default function AdminFacilities() {
     fd.append('description',    form.description)
     fd.append('location',       form.location)
     fd.append('capacity',       form.capacity)
+    fd.append('buffer_minutes', form.buffer_minutes ?? '')
     fd.append('price_per_hour', form.price_per_hour)
     fd.append('resident_price_per_hour', form.resident_price_per_hour ?? '')
     fd.append('status',         form.status)
@@ -621,6 +622,22 @@ export default function AdminFacilities() {
                 />
               </div>
               <div>
+                <Label>Cleaning/Setup Buffer (minutes)</Label>
+                <Input
+                  type="number"
+                  min={0}
+                  max={480}
+                  step={5}
+                  value={form.buffer_minutes}
+                  onChange={e => setF('buffer_minutes', e.target.value)}
+                  className="mt-1"
+                />
+                <p className="text-xs text-[#1C2833] mt-1">
+                  Blocked before and after every reservation on this facility — a 2–4pm booking with a
+                  30-minute buffer blocks 1:30pm–4:30pm from any other reservation.
+                </p>
+              </div>
+              <div>
                 <Label>Price per Hour (₱)</Label>
                 <Input
                   type="number"
@@ -788,45 +805,56 @@ export default function AdminFacilities() {
 
                 <div className="space-y-2">
                   {editingAmenities.map(a => (
-                    <div key={a.id} className="flex items-center gap-2 p-2.5 rounded-lg border border-[#E5E7E9]">
-                      <div className="flex-1 grid grid-cols-2 sm:grid-cols-4 gap-2">
-                        <Input
-                          defaultValue={a.name}
-                          onBlur={e => e.target.value !== a.name && updateAmenityMutation.mutate({ id: a.id, data: { name: e.target.value } })}
-                          placeholder="Name"
-                          className="text-sm"
-                        />
-                        <Input
-                          type="number" min={1}
-                          defaultValue={a.quantity}
-                          onBlur={e => Number(e.target.value) !== a.quantity && updateAmenityMutation.mutate({ id: a.id, data: { quantity: e.target.value } })}
-                          placeholder="Qty"
-                          className="text-sm"
-                        />
-                        <Input
-                          type="number" min={0} step={10}
-                          defaultValue={a.fee}
-                          onBlur={e => Number(e.target.value) !== Number(a.fee) && updateAmenityMutation.mutate({ id: a.id, data: { fee: e.target.value } })}
-                          placeholder="Fee (₱)"
-                          className="text-sm"
-                        />
-                        <label className="flex items-center gap-1.5 text-xs text-[#1C2833]">
-                          <input
-                            type="checkbox"
-                            checked={a.is_available}
-                            onChange={e => updateAmenityMutation.mutate({ id: a.id, data: { is_available: e.target.checked } })}
-                            className="h-3.5 w-3.5 rounded border-[#E5E7E9] text-[#C0392B]"
+                    <div key={a.id} className="p-2.5 rounded-lg border border-[#E5E7E9]">
+                      <div className="flex items-center gap-2">
+                        <div className="flex-1 grid grid-cols-2 sm:grid-cols-4 gap-2">
+                          <Input
+                            defaultValue={a.name}
+                            onBlur={e => e.target.value !== a.name && updateAmenityMutation.mutate({ id: a.id, data: { name: e.target.value } })}
+                            placeholder="Name"
+                            className="text-sm"
                           />
-                          Available
-                        </label>
+                          <Input
+                            type="number" min={1} max={1000}
+                            defaultValue={a.quantity}
+                            onBlur={e => Number(e.target.value) !== a.quantity && updateAmenityMutation.mutate({ id: a.id, data: { quantity: e.target.value } })}
+                            placeholder={a.is_quantifiable ? 'Stock (max 1000)' : 'Qty'}
+                            className="text-sm"
+                          />
+                          <Input
+                            type="number" min={0} step={10}
+                            defaultValue={a.fee}
+                            onBlur={e => Number(e.target.value) !== Number(a.fee) && updateAmenityMutation.mutate({ id: a.id, data: { fee: e.target.value } })}
+                            placeholder={a.is_quantifiable ? 'Fee per unit (₱)' : 'Fee (₱)'}
+                            className="text-sm"
+                          />
+                          <label className="flex items-center gap-1.5 text-xs text-[#1C2833]">
+                            <input
+                              type="checkbox"
+                              checked={a.is_available}
+                              onChange={e => updateAmenityMutation.mutate({ id: a.id, data: { is_available: e.target.checked } })}
+                              className="h-3.5 w-3.5 rounded border-[#E5E7E9] text-[#C0392B]"
+                            />
+                            Available
+                          </label>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => { if (window.confirm(`Remove "${a.name}"?`)) deleteAmenityMutation.mutate(a.id) }}
+                          className="p-1.5 rounded text-[#C0392B] hover:bg-[#FADBD8]/40 shrink-0"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </button>
                       </div>
-                      <button
-                        type="button"
-                        onClick={() => { if (window.confirm(`Remove "${a.name}"?`)) deleteAmenityMutation.mutate(a.id) }}
-                        className="p-1.5 rounded text-[#C0392B] hover:bg-[#FADBD8]/40 shrink-0"
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </button>
+                      <label className="flex items-center gap-1.5 text-xs text-[#1C2833] mt-2">
+                        <input
+                          type="checkbox"
+                          checked={a.is_quantifiable}
+                          onChange={e => updateAmenityMutation.mutate({ id: a.id, data: { is_quantifiable: e.target.checked } })}
+                          className="h-3.5 w-3.5 rounded border-[#E5E7E9] text-[#C0392B]"
+                        />
+                        Let the client choose quantity (e.g. chairs/tables) — Fee becomes per unit, Qty becomes the rentable stock
+                      </label>
                     </div>
                   ))}
                   {editingAmenities.length === 0 && (
@@ -843,17 +871,17 @@ export default function AdminFacilities() {
                       className="text-sm"
                     />
                     <Input
-                      type="number" min={1}
+                      type="number" min={1} max={1000}
                       value={amenityForm.quantity}
                       onChange={e => setAmenityForm(f => ({ ...f, quantity: e.target.value }))}
-                      placeholder="Qty"
+                      placeholder={amenityForm.is_quantifiable ? 'Stock (max 1000)' : 'Qty'}
                       className="text-sm"
                     />
                     <Input
                       type="number" min={0} step={10}
                       value={amenityForm.fee}
                       onChange={e => setAmenityForm(f => ({ ...f, fee: e.target.value }))}
-                      placeholder="Fee (₱)"
+                      placeholder={amenityForm.is_quantifiable ? 'Fee per unit (₱)' : 'Fee (₱)'}
                       className="text-sm"
                     />
                     <Button
@@ -866,11 +894,21 @@ export default function AdminFacilities() {
                         name: amenityForm.name,
                         quantity: Number(amenityForm.quantity) || 1,
                         fee: amenityForm.fee || 0,
+                        is_quantifiable: amenityForm.is_quantifiable,
                       })}
                     >
                       <Plus className="h-3.5 w-3.5" /> Add
                     </Button>
                   </div>
+                  <label className="flex items-center gap-1.5 text-xs text-[#1C2833] mt-2">
+                    <input
+                      type="checkbox"
+                      checked={amenityForm.is_quantifiable}
+                      onChange={e => setAmenityForm(f => ({ ...f, is_quantifiable: e.target.checked }))}
+                      className="h-3.5 w-3.5 rounded border-[#E5E7E9] text-[#C0392B]"
+                    />
+                    Let the client choose quantity (e.g. chairs/tables) — Fee becomes per unit, Qty becomes the rentable stock
+                  </label>
                 </div>
               </div>
             )}

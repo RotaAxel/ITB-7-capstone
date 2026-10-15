@@ -19,6 +19,19 @@ class ReservationController extends Controller
     // considerations — below it, those fields aren't even shown on the form.
     private const LARGE_EVENT_THRESHOLD = 50;
 
+    // Purely descriptive event-type label a client can optionally attach to a
+    // reservation (e.g. "Birthday Event") — no pricing or business-logic
+    // impact, just lets clients/admins categorize at a glance. Mirrored in the
+    // frontend's EVENT_PACKAGES list (NewReservationModal.jsx / NewReservation.jsx).
+    public const EVENT_PACKAGES = [
+        'Birthday Event',
+        'Wedding Event',
+        'Corporate Event',
+        'Sports Event',
+        'School Event',
+        'Other',
+    ];
+
     // ─── Client / shared listing ──────────────────────────────────────────────
 
     public function index(Request $request)
@@ -61,21 +74,32 @@ class ReservationController extends Controller
         $validated = $request->validate([
             'facility_id'            => ['required', 'exists:facilities,id'],
             'purpose'                => ['required', 'string'],
+            'event_package'          => ['nullable', 'string', 'in:' . implode(',', self::EVENT_PACKAGES)],
             'waste_management_plan'  => ['nullable', 'string'],
             'crowd_management_plan'  => ['nullable', 'string'],
             'event_considerations'   => ['nullable', 'string'],
             'number_of_participants' => ['required', 'integer', 'min:1'],
-            // Either a single date (the ordinary path — every existing caller keeps
-            // working unchanged) or several dates bundled into one request (e.g.
-            // "every Saturday in March"), sharing this same time slot, purpose,
-            // amenities, letters, and terms across every date in the bundle.
-            'reservation_date'       => ['required_without:reservation_dates', 'nullable', 'date', 'after_or_equal:today'],
-            'reservation_dates'      => ['required_without:reservation_date', 'nullable', 'array', 'min:1', 'max:30'],
-            'reservation_dates.*'    => ['date', 'after_or_equal:today'],
-            'start_time'             => ['required', 'date_format:H:i'],
-            'end_time'               => ['required', 'date_format:H:i', 'after:start_time'],
+            // Either a single date+time (the ordinary path — every existing caller
+            // keeps working unchanged) or several dates bundled into one request
+            // (e.g. "every Saturday in March"), each carrying its *own* time slot —
+            // only facility, purpose, amenities, letters, and terms are shared
+            // across every date in the bundle.
+            'reservation_date'              => ['required_without:reservation_dates', 'nullable', 'date', 'after_or_equal:today'],
+            'start_time'                    => ['required_without:reservation_dates', 'nullable', 'date_format:H:i'],
+            'end_time'                      => ['required_without:reservation_dates', 'nullable', 'date_format:H:i', 'after:start_time'],
+            'reservation_dates'              => ['required_without:reservation_date', 'nullable', 'array', 'min:1', 'max:30'],
+            'reservation_dates.*.date'       => ['required', 'date', 'after_or_equal:today'],
+            'reservation_dates.*.start_time' => ['required', 'date_format:H:i'],
+            'reservation_dates.*.end_time'   => ['required', 'date_format:H:i'],
             'selected_amenities'     => ['nullable', 'array'],
             'selected_amenities.*'   => ['integer', 'exists:amenities,id'],
+            // How many units of each *quantifiable* selected amenity (chairs,
+            // tables) the client wants — keyed by amenity id. Ignored for any
+            // amenity that isn't quantifiable (those stay a flat on/off
+            // selection); cross-checked against each amenity's own stock and the
+            // system-wide cap below, not trusted at face value.
+            'amenity_quantities'     => ['nullable', 'array'],
+            'amenity_quantities.*'   => ['integer', 'min:1'],
             // Not "boolean" — this request posts as multipart/form-data whenever an
             // authorization letter is attached (a real file upload can't travel any
             // other way), and a checkbox/flag in multipart arrives as the literal
@@ -155,64 +179,119 @@ class ReservationController extends Controller
             }
         }
 
-        // Dates to create — a plain `reservation_date` becomes a one-element list,
-        // so the single-date path below (and every response it produces) is
-        // byte-for-byte identical to before this feature existed. Deduped and
-        // sorted so a client submitting the same date twice, or out of order,
-        // doesn't create two rows for one date.
-        $dates = $validated['reservation_dates'] ?? [$validated['reservation_date']];
-        $dates = collect($dates)->unique()->sort()->values()->all();
-        $isGroup = count($dates) > 1;
+        // Slots to create — a plain `reservation_date`/`start_time`/`end_time`
+        // becomes a one-element list, so the single-date path below (and every
+        // response it produces) is byte-for-byte identical to before this
+        // feature existed. Each slot in a bundle carries its own time, so a
+        // client can e.g. book 9am-11am on one date and 2pm-5pm on another.
+        $slots = $validated['reservation_dates'] ?? [[
+            'date'       => $validated['reservation_date'],
+            'start_time' => $validated['start_time'],
+            'end_time'   => $validated['end_time'],
+        ]];
 
-        // Conflict check — every date in the bundle, up front, before creating
-        // anything. One shared time slot across all dates (see validation above).
+        // A wildcard array rule (e.g. "reservation_dates.*.end_time" => "after:
+        // reservation_dates.*.start_time") can't reliably cross-reference a
+        // sibling field at the same index, so each slot's own end-after-start
+        // is checked by hand instead.
+        foreach ($slots as $slot) {
+            if ($slot['end_time'] <= $slot['start_time']) {
+                return response()->json([
+                    'message' => "{$slot['date']}: end time must be after start time.",
+                ], 422);
+            }
+        }
+
+        $duplicateDates = collect($slots)->pluck('date')->duplicates();
+        if ($duplicateDates->isNotEmpty()) {
+            return response()->json([
+                'message' => 'Each date in the bundle must be unique: ' . $duplicateDates->implode(', ') . ' was added more than once.',
+            ], 422);
+        }
+
+        $slots = collect($slots)->sortBy('date')->values()->all();
+        $dates = collect($slots)->pluck('date')->all();
+        $isGroup = count($slots) > 1;
+
+        // Conflict check — every date (with its own time slot) in the bundle, up
+        // front, before creating anything. Each existing reservation's blocked
+        // window is padded by the facility's cleaning/setup buffer
+        // (Facility::buffer_minutes) on both sides before checking for overlap,
+        // so a new request can't be squeezed in immediately before/after another
+        // one with no time to prepare the facility.
+        $bufferMinutes = $facility->buffer_minutes;
+        $bufferTime = sprintf('%02d:%02d:00', intdiv($bufferMinutes, 60), $bufferMinutes % 60);
+
         $conflictDates = [];
-        foreach ($dates as $date) {
+        foreach ($slots as $slot) {
             $conflict = Reservation::where('facility_id', $validated['facility_id'])
-                ->where('reservation_date', $date)
+                ->where('reservation_date', $slot['date'])
                 ->whereIn('status', ['pending', 'approved', 'confirmed'])
-                ->where(function ($q) use ($validated) {
-                    $q->where(function ($inner) use ($validated) {
-                        $inner->where('start_time', '<', $validated['end_time'])
-                              ->where('end_time', '>', $validated['start_time']);
-                    });
-                })
+                ->whereRaw('? < ADDTIME(end_time, ?) AND ? > SUBTIME(start_time, ?)', [
+                    $slot['start_time'], $bufferTime,
+                    $slot['end_time'], $bufferTime,
+                ])
                 ->exists();
             if ($conflict) {
-                $conflictDates[] = $date;
+                $conflictDates[] = $slot['date'];
             }
         }
 
         if ($conflictDates) {
+            $bufferNote = $bufferMinutes > 0
+                ? " (this facility needs a {$bufferMinutes}-minute gap before/after each reservation to prepare and clean)"
+                : '';
             $message = $isGroup
-                ? 'These dates are already booked for this time slot: ' . implode(', ', $conflictDates) . '. Please adjust your dates and try again.'
-                : 'This time slot is already booked. Please choose a different time.';
+                ? 'One or more of these dates/times are already booked' . $bufferNote . ': ' . implode(', ', $conflictDates) . '. Please adjust and try again.'
+                : 'This time slot is already booked' . $bufferNote . '. Please choose a different time.';
             return response()->json(['message' => $message], 422);
         }
 
-        // Calculate per-date amount — use timestamps to avoid Carbon 3 signed-diff
-        // behaviour. Every date shares the same time slot, so the hours (and thus
-        // the per-date facility cost) are identical across the bundle.
-        $startTs = strtotime($dates[0] . ' ' . $validated['start_time']);
-        $endTs   = strtotime($dates[0] . ' ' . $validated['end_time']);
-        $hours   = max(0, ($endTs - $startTs) / 3600);
+        // Each selected amenity ("material") can carry its own additional fee —
+        // flat per selection for a normal amenity, or *per unit* for a
+        // quantifiable one (chairs, tables — see Amenity::is_quantifiable), where
+        // the client picks how many they need. Charged once per date in the
+        // bundle (each date gets its own full set of amenities/quantities).
+        // Re-derived from the DB rather than trusting any client-sent amount or
+        // quantity, so neither can be tampered with.
+        $amenitiesFee = 0;
+        $amenityQuantitiesToStore = [];
+        if (!empty($validated['selected_amenities'])) {
+            $amenities = Amenity::whereIn('id', $validated['selected_amenities'])->get();
+            $requestedQuantities = $validated['amenity_quantities'] ?? [];
 
-        // Each selected amenity ("material") can carry its own flat additional fee
-        // (see the migration that added Amenity::fee) — summed once per selection,
-        // not multiplied by its stock `quantity` column, and charged once per date
-        // in the bundle (each date gets its own full set of amenities). Re-sums
-        // from the DB rather than trusting any client-sent amount, so this can't
-        // be tampered with.
-        $amenitiesFee = !empty($validated['selected_amenities'])
-            ? Amenity::whereIn('id', $validated['selected_amenities'])->sum('fee')
-            : 0;
+            foreach ($amenities as $amenity) {
+                if (!$amenity->is_quantifiable) {
+                    $amenitiesFee += $amenity->fee;
+                    continue;
+                }
+
+                $maxAllowed = min($amenity->quantity, Amenity::MAX_QUANTITY_PER_RESERVATION);
+                $requested  = (int) ($requestedQuantities[$amenity->id] ?? 1);
+
+                if ($requested < 1 || $requested > $maxAllowed) {
+                    return response()->json([
+                        'message' => "{$amenity->name}: quantity must be between 1 and {$maxAllowed}.",
+                    ], 422);
+                }
+
+                $amenitiesFee += $amenity->fee * $requested;
+                $amenityQuantitiesToStore[$amenity->id] = $requested;
+            }
+        }
 
         // Facility::rateFor() returns the discounted resident_price_per_hour only
         // for a verified Cabuyeño resident (and only when the facility has one set)
         // — re-derived from the authenticated user's own server-side verification
         // status, never trusted from the client.
-        $rate           = $facility->rateFor($request->user());
-        $amountPerDate  = round($rate * $hours + $amenitiesFee, 2);
+        $rate = $facility->rateFor($request->user());
+
+        // Whether this bundle is free (₱0 all-in, e.g. the Open Field) depends only
+        // on the shared rate and amenities fee, never on any one date's duration —
+        // every slot's own start/end time is already validated to be non-zero
+        // length, so rate=0 and amenitiesFee=0 is the only way any slot's amount
+        // can come out to ₱0, and that's true for every slot in the bundle alike.
+        $isFree = $rate <= 0 && $amenitiesFee <= 0;
 
         // Private ("local") disk, not the public one facility images use — this can
         // be a personally-identifying document, served only via an authenticated
@@ -231,27 +310,43 @@ class ReservationController extends Controller
         $groupId = $isGroup ? (string) Str::uuid() : null;
 
         $reservations = DB::transaction(function () use (
-            $dates, $groupId, $validated, $request, $amountPerDate,
-            $termsAcknowledged, $letterPath, $requestLetterPath
+            $slots, $groupId, $validated, $request, $rate, $amenitiesFee, $isFree,
+            $termsAcknowledged, $letterPath, $requestLetterPath, $amenityQuantitiesToStore
         ) {
-            return collect($dates)->map(function ($date) use (
-                $groupId, $validated, $request, $amountPerDate,
-                $termsAcknowledged, $letterPath, $requestLetterPath
+            return collect($slots)->map(function ($slot) use (
+                $groupId, $validated, $request, $rate, $amenitiesFee, $isFree,
+                $termsAcknowledged, $letterPath, $requestLetterPath, $amenityQuantitiesToStore
             ) {
+                // Each date's own duration (via timestamps, to avoid Carbon 3
+                // signed-diff behaviour) — differing time slots in a bundle mean
+                // differing hours, and so a differing amount, per date.
+                $startTs = strtotime($slot['date'] . ' ' . $slot['start_time']);
+                $endTs   = strtotime($slot['date'] . ' ' . $slot['end_time']);
+                $hours   = max(0, ($endTs - $startTs) / 3600);
+                $amount  = round($rate * $hours + $amenitiesFee, 2);
+
                 $reservation = Reservation::create([
                     'user_id'                   => $request->user()->id,
                     'facility_id'                => $validated['facility_id'],
                     'reservation_group_id'       => $groupId,
                     'purpose'                    => $validated['purpose'],
+                    'event_package'              => $validated['event_package'] ?? null,
                     'waste_management_plan'      => $validated['waste_management_plan'] ?? null,
                     'crowd_management_plan'      => $validated['crowd_management_plan'] ?? null,
                     'event_considerations'       => $validated['event_considerations'] ?? null,
                     'number_of_participants'     => $validated['number_of_participants'],
-                    'reservation_date'           => $date,
-                    'start_time'                 => $validated['start_time'],
-                    'end_time'                   => $validated['end_time'],
+                    'reservation_date'           => $slot['date'],
+                    'start_time'                 => $slot['start_time'],
+                    'end_time'                   => $slot['end_time'],
                     'selected_amenities'         => $validated['selected_amenities'] ?? null,
-                    'status'                     => 'pending',
+                    'amenity_quantities'         => !empty($amenityQuantitiesToStore) ? $amenityQuantitiesToStore : null,
+                    // Only skips straight to 'confirmed' if terms are *already*
+                    // acknowledged in this same request (the modal booking flow
+                    // collects agreement before submitting) — the full-page flow
+                    // always submits this false and still needs a separate Terms
+                    // step first, which is where acknowledgeTerms() finishes the
+                    // job for a free reservation once that happens.
+                    'status'                     => ($isFree && $termsAcknowledged && $validated['type'] === 'book') ? 'confirmed' : 'pending',
                     'type'                       => $validated['type'],
                     'terms_acknowledged'         => $termsAcknowledged,
                     'terms_acknowledged_at'      => $termsAcknowledged ? now() : null,
@@ -262,24 +357,33 @@ class ReservationController extends Controller
                 Payment::create([
                     'reservation_id' => $reservation->id,
                     'user_id'        => $request->user()->id,
-                    'amount'         => $amountPerDate,
+                    'amount'         => $amount,
                     'currency'       => 'PHP',
-                    'status'         => 'pending',
+                    'status'         => $isFree ? 'paid' : 'pending',
+                    ...($isFree ? [
+                        'paid_at'        => now(),
+                        'payment_method' => 'free',
+                        'receipt_number' => 'CABS-' . now()->format('Y') . '-' . strtoupper(Str::random(6)),
+                    ] : []),
                 ]);
 
                 return $reservation;
             });
         });
 
-        $typeLabel = $validated['type'] === 'book' ? 'a booking (instant confirm on payment)' : 'a reservation request';
+        $typeLabel = $isFree
+            ? ($validated['type'] === 'book' ? 'a free booking (no payment required)' : 'a free reservation request')
+            : ($validated['type'] === 'book' ? 'a booking (instant confirm on payment)' : 'a reservation request');
 
         if ($isGroup) {
-            $dateList = implode(', ', $dates);
+            // Each date can carry its own time slot now, so the notification lists
+            // them individually rather than assuming one shared time for the bundle.
+            $slotList = collect($slots)->map(fn ($s) => "{$s['date']} ({$s['start_time']}-{$s['end_time']})")->implode(', ');
             NotificationService::notifyAdmins(
                 'new_reservation',
                 'New Multi-Date Reservation Request',
                 "{$request->user()->full_name} submitted {$typeLabel} for {$facility->name} on " . count($dates)
-                    . " dates ({$dateList}) from {$validated['start_time']} to {$validated['end_time']}.",
+                    . " dates: {$slotList}.",
                 $reservations->first()->id
             );
 
@@ -297,7 +401,7 @@ class ReservationController extends Controller
         NotificationService::notifyAdmins(
             'new_reservation',
             'New Reservation Request',
-            "{$request->user()->full_name} submitted {$typeLabel} for {$facility->name} on {$dates[0]} from {$validated['start_time']} to {$validated['end_time']}.",
+            "{$request->user()->full_name} submitted {$typeLabel} for {$facility->name} on {$slots[0]['date']} from {$slots[0]['start_time']} to {$slots[0]['end_time']}.",
             $reservation->id
         );
 
@@ -389,6 +493,16 @@ class ReservationController extends Controller
     public function cancelGroup(Request $request, $groupId)
     {
         return $this->runGroupAction($groupId, fn ($id) => $this->cancel($request, $id));
+    }
+
+    // A bundle is N independent Reservation rows, each with its own
+    // terms_acknowledged flag — acknowledging terms on just the first one (which
+    // is all the single-reservation endpoint can see) would leave the rest
+    // unacknowledged, and PaymentController::createGroupLink() requires every
+    // member to have agreed before it'll create the group's payment link.
+    public function acknowledgeTermsGroup(Request $request, $groupId)
+    {
+        return $this->runGroupAction($groupId, fn ($id) => $this->acknowledgeTerms($request, $id));
     }
 
     private function runGroupAction(string $groupId, \Closure $action)
@@ -518,7 +632,7 @@ class ReservationController extends Controller
 
     public function acknowledgeTerms(Request $request, $id)
     {
-        $reservation = Reservation::findOrFail($id);
+        $reservation = Reservation::with(['user', 'facility', 'payment'])->findOrFail($id);
 
         if ($reservation->user_id !== $request->user()->id) {
             return response()->json(['message' => 'Forbidden.'], 403);
@@ -529,7 +643,42 @@ class ReservationController extends Controller
             'terms_acknowledged_at' => now(),
         ]);
 
+        $this->confirmIfFreeAndReady($reservation);
+
         return response()->json(['message' => 'Terms acknowledged.', 'reservation' => $reservation->fresh()]);
+    }
+
+    // A free reservation (facility price ₱0, see Facility::rateFor()) has its
+    // Payment auto-marked 'paid' the moment it's created (see store()) — there's
+    // nothing left to actually pay, so once both gates that would normally lead
+    // to payment are cleared (terms acknowledged, and — for "reserve" — admin
+    // approval already given), it confirms immediately instead of sitting
+    // around waiting for a payment step that will never come. Called from both
+    // acknowledgeTerms() and approve() since either can be the gate that clears
+    // last, depending on whether the client agrees to terms before or after
+    // their request is approved.
+    private function confirmIfFreeAndReady(Reservation $reservation): void
+    {
+        $readyToConfirm = $reservation->terms_acknowledged
+            && $reservation->payment && $reservation->payment->status === 'paid'
+            && (
+                ($reservation->type === 'book' && $reservation->status === 'pending')
+                || ($reservation->type === 'reserve' && $reservation->status === 'approved')
+            );
+
+        if (!$readyToConfirm) {
+            return;
+        }
+
+        $reservation->update(['status' => 'confirmed']);
+
+        NotificationService::notifyUser(
+            $reservation->user,
+            'reservation_confirmed',
+            $reservation->type === 'book' ? 'Booking Confirmed' : 'Reservation Confirmed',
+            "Your {$reservation->facility->name} reservation on {$reservation->reservation_date->format('M d, Y')} is confirmed — this facility is free of charge, so no payment is required.",
+            $reservation->id
+        );
     }
 
     // ─── Admin: Approve ───────────────────────────────────────────────────────
@@ -566,6 +715,21 @@ class ReservationController extends Controller
                 'reviewed_by' => $request->user()->id,
                 'reviewed_at' => now(),
             ]);
+
+            // Free facility + terms already acknowledged (the client agreed before
+            // this approval ever happened) — skip straight past "awaiting payment"
+            // since there's nothing to pay. confirmIfFreeAndReady() sends its own
+            // "confirmed" notification when it applies, so no "proceed to payment"
+            // one follows it in that case.
+            $reservation->refresh();
+            $this->confirmIfFreeAndReady($reservation);
+
+            if ($reservation->status === 'confirmed') {
+                return response()->json([
+                    'message'     => 'Reservation approved and confirmed — this facility is free, no payment required.',
+                    'reservation' => $reservation->fresh()->load(['user', 'facility', 'payment']),
+                ]);
+            }
 
             NotificationService::notifyUser(
                 $reservation->user,

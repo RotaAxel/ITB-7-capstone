@@ -630,6 +630,7 @@ export default function AdminReservations() {
                 ['Duration',     duration != null ? `${duration}h` : '—'],
                 ['Participants', r.number_of_participants],
                 ['Purpose',      r.purpose],
+                ...(r.event_package ? [['Event Package', r.event_package]] : []),
                 ...(r.waste_management_plan ? [['Waste Management', r.waste_management_plan]] : []),
                 ...(r.crowd_management_plan ? [['Crowd Management', r.crowd_management_plan]] : []),
                 ...(r.event_considerations  ? [['Event Considerations', r.event_considerations]] : []),
