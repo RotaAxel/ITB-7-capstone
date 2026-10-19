@@ -63,7 +63,13 @@ class FacilityController extends Controller
 
     public function getAvailability($id, Request $request)
     {
-        $request->validate(['date' => ['required', 'date']]);
+        $request->validate([
+            'date' => ['required', 'date'],
+            // Optional — the client doesn't know its own participant count until
+            // a later step in the booking form than the date (see below), so this
+            // is only present once that's been entered.
+            'participants' => ['nullable', 'integer', 'min:1'],
+        ]);
 
         $facility = Facility::findOrFail($id);
 
@@ -88,7 +94,43 @@ class FacilityController extends Controller
                     'end_time'   => $end->format('H:i:s'),
                     'status'     => $slot->status,
                 ];
-            });
+            })
+            ->values()
+            ->all();
+
+        // This whole day may also be blocked outright if it falls within a
+        // nearby large event's prep/cleanup window (see
+        // Facility::large_event_buffer_days and the matching check in
+        // ReservationController::store()) — distinct from the per-slot buffer
+        // padding above, which only pads an actual booked time range. 50
+        // mirrors ReservationController::LARGE_EVENT_THRESHOLD. This cuts both
+        // ways, same as store(): an existing large event blocks a new
+        // reservation of any size, and — once the caller tells us via
+        // ?participants= that THIS would itself be a large event — any nearby
+        // reservation at all (large or small) blocks it right back.
+        if ($facility->large_event_buffer_days > 0) {
+            $prepDays    = $facility->large_event_buffer_days;
+            $windowStart = date('Y-m-d', strtotime("{$request->date} -{$prepDays} days"));
+            $windowEnd   = date('Y-m-d', strtotime("{$request->date} +{$prepDays} days"));
+            $isNewLargeEvent = ($request->integer('participants')) >= 50;
+
+            $nearbyQuery = Reservation::where('facility_id', $id)
+                ->whereIn('status', ['pending', 'approved', 'confirmed'])
+                ->whereBetween('reservation_date', [$windowStart, $windowEnd])
+                ->where('reservation_date', '!=', $request->date);
+
+            $nearbyBlocking = $isNewLargeEvent
+                ? $nearbyQuery->exists()
+                : $nearbyQuery->where('number_of_participants', '>=', 50)->exists();
+
+            if ($nearbyBlocking) {
+                $slots[] = [
+                    'start_time' => '00:00:00',
+                    'end_time'   => '23:59:59',
+                    'status'     => 'large_event_block',
+                ];
+            }
+        }
 
         return response()->json($slots);
     }
@@ -105,6 +147,9 @@ class FacilityController extends Controller
             // Minutes blocked before/after every reservation for cleaning/setup —
             // see the migration that added this column.
             'buffer_minutes' => ['nullable', 'integer', 'min:0', 'max:480'],
+            // Whole calendar days blocked before/after a large event (50+
+            // participants) — see the migration that added this column.
+            'large_event_buffer_days' => ['nullable', 'integer', 'min:0', 'max:14'],
             'price_per_hour'=> ['required', 'numeric', 'min:0'],
             // Discounted rate for verified Cabuyeño residents — null/omitted means
             // no resident discount, everyone pays price_per_hour.
@@ -147,6 +192,7 @@ class FacilityController extends Controller
             'location'       => $validated['location'],
             'capacity'       => $validated['capacity'],
             'buffer_minutes' => $validated['buffer_minutes'] ?? 30,
+            'large_event_buffer_days' => $validated['large_event_buffer_days'] ?? 1,
             'price_per_hour' => $validated['price_per_hour'],
             'resident_price_per_hour' => $validated['resident_price_per_hour'] ?? null,
             'status'         => $validated['status'] ?? 'available',
@@ -173,6 +219,7 @@ class FacilityController extends Controller
             'location'      => ['sometimes', 'string', 'max:255'],
             'capacity'      => ['sometimes', 'integer', 'min:1'],
             'buffer_minutes' => ['nullable', 'integer', 'min:0', 'max:480'],
+            'large_event_buffer_days' => ['nullable', 'integer', 'min:0', 'max:14'],
             'price_per_hour'=> ['sometimes', 'numeric', 'min:0'],
             'resident_price_per_hour' => ['nullable', 'numeric', 'min:0'],
             'status'        => ['sometimes', 'in:available,under_maintenance,unavailable'],

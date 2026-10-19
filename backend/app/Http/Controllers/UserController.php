@@ -41,11 +41,15 @@ class UserController extends Controller
 
     public function store(Request $request)
     {
+        // User management is staff-only now (see routes/api.php) — staff can
+        // create client and staff accounts, but not administrator ones. There
+        // is no administrator-reachable path left to this endpoint, so this is
+        // the only gate needed.
         $validated = $request->validate([
             'full_name'      => ['required', 'string', 'max:255'],
             'email'          => ['required', 'email', 'unique:users,email'],
             'password'       => ['required', Password::min(8)],
-            'role'           => ['required', 'in:client,staff,administrator'],
+            'role'           => ['required', 'in:client,staff'],
             'age'            => ['nullable', 'integer', 'min:1'],
             'gender'         => ['nullable', 'in:male,female,other'],
             'address'        => ['nullable', 'string'],
@@ -65,10 +69,17 @@ class UserController extends Controller
     {
         $user = User::findOrFail($id);
 
+        // Same reasoning as destroy() below — staff (the only role that can
+        // reach this endpoint now) can't touch an administrator account at all,
+        // and can't promote anyone to one either.
+        if ($user->isAdmin()) {
+            return response()->json(['message' => 'Cannot edit an administrator account.'], 403);
+        }
+
         $validated = $request->validate([
             'full_name'      => ['sometimes', 'string', 'max:255'],
             'email'          => ['sometimes', 'email', "unique:users,email,{$id}"],
-            'role'           => ['sometimes', 'in:client,staff,administrator'],
+            'role'           => ['sometimes', 'in:client,staff'],
             'age'            => ['nullable', 'integer', 'min:1'],
             'gender'         => ['nullable', 'in:male,female,other'],
             'address'        => ['nullable', 'string'],

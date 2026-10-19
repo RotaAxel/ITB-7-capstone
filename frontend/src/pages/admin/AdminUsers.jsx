@@ -332,13 +332,15 @@ export default function AdminUsers() {
                           <MapPin className="h-4 w-4" />
                         </button>
                       )}
-                      <button
-                        onClick={() => openEdit(u)}
-                        className="p-1.5 rounded-lg text-[#1C2833] hover:text-[#2980B9] hover:bg-blue-50 transition-colors"
-                        title="Edit"
-                      >
-                        <Pencil className="h-4 w-4" />
-                      </button>
+                      {u.role !== 'administrator' && (
+                        <button
+                          onClick={() => openEdit(u)}
+                          className="p-1.5 rounded-lg text-[#1C2833] hover:text-[#2980B9] hover:bg-blue-50 transition-colors"
+                          title="Edit"
+                        >
+                          <Pencil className="h-4 w-4" />
+                        </button>
+                      )}
                       {u.role !== 'administrator' && (
                         <button
                           onClick={() => setDeleteConfirm({ id: u.id, name: u.full_name })}
@@ -429,7 +431,6 @@ export default function AdminUsers() {
               >
                 <option value="client">Client</option>
                 <option value="staff">Staff</option>
-                <option value="administrator">Administrator</option>
               </select>
             </div>
             <div>

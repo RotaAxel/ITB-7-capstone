@@ -69,6 +69,22 @@ export default function ReservationDetailModal({ reservationId, onClose }) {
       .catch(() => toast.error(`Failed to download the ${kind} letter.`))
   }
 
+  // Printable Contract of Agreement (Kontrata) — Terms & Conditions plus a
+  // signature block for both parties. Available any time, independent of
+  // payment status, same as the letters above.
+  const downloadContract = () => {
+    api.get(`/reservations/${reservationId}/contract`, { responseType: 'blob' })
+      .then(res => {
+        const url = URL.createObjectURL(new Blob([res.data], { type: 'application/pdf' }))
+        const a   = document.createElement('a')
+        a.href     = url
+        a.download = `CABS-Contract-Reservation-${reservationId}.pdf`
+        a.click()
+        URL.revokeObjectURL(url)
+      })
+      .catch(() => toast.error('Failed to download the contract.'))
+  }
+
   const r = reservation
 
   // "Reserve" requests must be approved by an admin before payment unlocks;
@@ -129,6 +145,9 @@ export default function ReservationDetailModal({ reservationId, onClose }) {
           <Download className="h-3.5 w-3.5" /> Your Request Letter
         </Button>
       )}
+      <Button variant="outline" size="sm" onClick={downloadContract} className="flex items-center gap-1.5">
+        <Download className="h-3.5 w-3.5" /> Contract (Kontrata)
+      </Button>
       {canCancel && (
         <Button
           variant="danger"
@@ -177,9 +196,9 @@ export default function ReservationDetailModal({ reservationId, onClose }) {
                     ['Purpose',      r.purpose],
                     ...(r.event_package ? [['Event Package', r.event_package]] : []),
                     ['Participants', r.number_of_participants],
-                    ...(r.waste_management_plan ? [['Waste Management', r.waste_management_plan]] : []),
-                    ...(r.crowd_management_plan ? [['Crowd Management', r.crowd_management_plan]] : []),
                     ...(r.event_considerations  ? [['Event Considerations', r.event_considerations]] : []),
+                    ...(r.crowd_management_confirmed ? [['Crowd Management', 'Confirmed by client']] : []),
+                    ...(r.waste_management_confirmed ? [['Waste Management', 'Confirmed by client']] : []),
                     ['Submitted',    r.created_at ? format(parseISO(r.created_at), 'MMM d, yyyy h:mm a') : '—'],
                   ].map(([label, value]) => (
                     <div key={label} className="flex gap-4 py-2.5">

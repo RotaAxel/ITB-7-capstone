@@ -10,6 +10,7 @@ use App\Http\Controllers\AnalyticsController;
 use App\Http\Controllers\UserController;
 use App\Http\Controllers\WebhookController;
 use App\Http\Controllers\ReceiptController;
+use App\Http\Controllers\ContractController;
 use Illuminate\Support\Facades\Route;
 
 // Public routes
@@ -63,6 +64,9 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('/reservations/{id}/acknowledge-terms',       [ReservationController::class, 'acknowledgeTerms']);
     Route::get('/reservations/{id}/authorization-letter',     [ReservationController::class, 'downloadAuthorizationLetter']);
     Route::get('/reservations/{id}/request-letter',            [ReservationController::class, 'downloadRequestLetter']);
+    // Printable Contract of Agreement (Kontrata) — Terms & Conditions plus a
+    // signature block for both parties, for a physically-signed paper copy.
+    Route::get('/reservations/{id}/contract',                  [ContractController::class, 'download']);
 
     // Reservation groups — several dates submitted/approved/paid together as one
     // bundle (see store()'s reservation_dates[] path). Two path segments after
@@ -71,6 +75,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/reservations/groups/{groupId}',               [ReservationController::class, 'showGroup']);
     Route::post('/reservations/groups/{groupId}/cancel',       [ReservationController::class, 'cancelGroup']);
     Route::post('/reservations/groups/{groupId}/acknowledge-terms', [ReservationController::class, 'acknowledgeTermsGroup']);
+    Route::get('/reservations/groups/{groupId}/contract',       [ContractController::class, 'downloadGroup']);
 
     // Payments
     Route::post('/payments/{reservationId}/create-link',      [PaymentController::class, 'createLink']);
@@ -94,19 +99,34 @@ Route::middleware('auth:sanctum')->group(function () {
     // Staff + Admin routes
     Route::middleware('role:staff,administrator')->group(function () {
         Route::get('/admin/reservations',                         [ReservationController::class, 'adminIndex']);
-        Route::put('/admin/reservations/{id}/approve',            [ReservationController::class, 'approve']);
-        Route::put('/admin/reservations/{id}/reject',             [ReservationController::class, 'reject']);
         Route::put('/admin/reservations/{id}/complete',           [ReservationController::class, 'complete']);
         Route::put('/admin/reservations/{id}/notes',              [ReservationController::class, 'updateNotes']);
+    });
+
+    // Staff only routes — approving/rejecting a reservation (the step that
+    // unlocks payment), payments oversight, and user management all moved off
+    // the administrator role and onto staff, who now own these day-to-day
+    // tasks; administrator keeps viewing reservations/completing them above,
+    // but no longer approves/rejects or manages payments/users.
+    Route::middleware('role:staff')->group(function () {
+        Route::put('/admin/reservations/{id}/approve',            [ReservationController::class, 'approve']);
+        Route::put('/admin/reservations/{id}/reject',             [ReservationController::class, 'reject']);
         Route::put('/admin/reservations/groups/{groupId}/approve', [ReservationController::class, 'approveGroup']);
         Route::put('/admin/reservations/groups/{groupId}/reject',  [ReservationController::class, 'rejectGroup']);
+
+        // Payments
+        Route::get('/admin/payments',                             [PaymentController::class, 'adminIndex']);
+
+        // User management
+        Route::get('/admin/users',                                [UserController::class, 'index']);
+        Route::post('/admin/users',                               [UserController::class, 'store']);
+        Route::put('/admin/users/{id}',                           [UserController::class, 'update']);
+        Route::put('/admin/users/{id}/residency',                 [UserController::class, 'verifyResidency']);
+        Route::delete('/admin/users/{id}',                        [UserController::class, 'destroy']);
     });
 
     // Admin only routes
     Route::middleware('role:administrator')->group(function () {
-        // Payments
-        Route::get('/admin/payments',                             [PaymentController::class, 'adminIndex']);
-
         // Facility management
         Route::post('/admin/facilities',                          [FacilityController::class, 'store']);
         Route::put('/admin/facilities/{id}',                      [FacilityController::class, 'update']);
@@ -117,13 +137,6 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::post('/admin/amenities',                           [FacilityController::class, 'storeAmenity']);
         Route::put('/admin/amenities/{id}',                       [FacilityController::class, 'updateAmenity']);
         Route::delete('/admin/amenities/{id}',                    [FacilityController::class, 'destroyAmenity']);
-
-        // User management
-        Route::get('/admin/users',                                [UserController::class, 'index']);
-        Route::post('/admin/users',                               [UserController::class, 'store']);
-        Route::put('/admin/users/{id}',                           [UserController::class, 'update']);
-        Route::put('/admin/users/{id}/residency',                 [UserController::class, 'verifyResidency']);
-        Route::delete('/admin/users/{id}',                        [UserController::class, 'destroy']);
 
         // Analytics
         Route::get('/admin/analytics/summary',                    [AnalyticsController::class, 'summary']);

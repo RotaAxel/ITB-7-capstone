@@ -14,6 +14,7 @@ import Label from '@/components/ui/Label'
 import Modal from '@/components/ui/Modal'
 import SearchAutocomplete from '@/components/ui/SearchAutocomplete'
 import ReceiptModal from '@/components/ReceiptModal'
+import { useAuth } from '@/hooks/useAuth'
 
 const STATUS_OPTIONS = [
   { value: 'all',       label: 'All'       },
@@ -51,6 +52,12 @@ function avatarColor(name = '') {
 
 export default function AdminReservations() {
   const queryClient = useQueryClient()
+  const { user } = useAuth()
+  // Approving/rejecting a reservation request (the step that unlocks payment)
+  // is now a staff-only responsibility — an administrator viewing this same
+  // shared page (at either /admin/reservations or /staff/reservations) can
+  // still see everything but no longer gets these action buttons.
+  const canApprove = user?.role === 'staff'
 
   const [status, setStatus]           = useState('all')
   const [date,   setDate]             = useState('')
@@ -375,8 +382,8 @@ export default function AdminReservations() {
                         </div>
                         {/* "Reserve" is approved before payment (unlocks it); "Book" pays
                             first and auto-confirms, so its Approve here is just a manual
-                            fallback for a stuck payment webhook. */}
-                        {r.status === 'pending' && (
+                            fallback for a stuck payment webhook. Staff-only — see canApprove. */}
+                        {canApprove && r.status === 'pending' && (
                           <div className="flex gap-1" onClick={e => e.stopPropagation()}>
                             {r.type === 'reserve' || r.payment?.status === 'paid' ? (
                               <button
@@ -400,7 +407,7 @@ export default function AdminReservations() {
                             )}
                           </div>
                         )}
-                        {r.status === 'approved' && (
+                        {canApprove && r.status === 'approved' && (
                           <div className="flex gap-1 items-center" onClick={e => e.stopPropagation()}>
                             <span className="text-[11px] text-[#2980B9] self-center">Awaiting client payment</span>
                             <button
@@ -461,8 +468,8 @@ export default function AdminReservations() {
               <div className="flex items-center justify-between gap-2">
                 {/* "Reserve" is approved before payment (unlocks it); "Book" pays
                     first and auto-confirms, so its Approve here is just a manual
-                    fallback for a stuck payment webhook. */}
-                {r.status === 'pending' && (
+                    fallback for a stuck payment webhook. Staff-only — see canApprove. */}
+                {canApprove && r.status === 'pending' && (
                   <div className="flex items-center gap-2">
                     {r.type === 'reserve' || r.payment?.status === 'paid' ? (
                       <Button
@@ -488,7 +495,7 @@ export default function AdminReservations() {
                     )}
                   </div>
                 )}
-                {r.status === 'approved' && (
+                {canApprove && r.status === 'approved' && (
                   <div className="flex items-center gap-2">
                     <span className="text-sm text-[#2980B9]">Awaiting client payment</span>
                     <Button
@@ -502,6 +509,11 @@ export default function AdminReservations() {
                       <X className="h-3.5 w-3.5" /> Revoke Approval
                     </Button>
                   </div>
+                )}
+                {!canApprove && ['pending', 'approved'].includes(r.status) && (
+                  <span className="text-sm text-[#1C2833] italic">
+                    {r.status === 'pending' ? 'Awaiting staff approval' : 'Awaiting client payment'}
+                  </span>
                 )}
                 {r.status === 'confirmed' && (() => {
                   const hasEnded = r.reservation_date && r.end_time
@@ -534,7 +546,7 @@ export default function AdminReservations() {
                 <span className="flex items-center gap-2 text-sm font-medium text-[#1F618D]">
                   <CalendarDays className="h-4 w-4 shrink-0" /> Part of a multi-date bundle
                 </span>
-                {['pending', 'approved'].includes(r.status) && (
+                {canApprove && ['pending', 'approved'].includes(r.status) && (
                   <div className="flex items-center gap-2 shrink-0">
                     <Button
                       size="sm"
@@ -631,9 +643,9 @@ export default function AdminReservations() {
                 ['Participants', r.number_of_participants],
                 ['Purpose',      r.purpose],
                 ...(r.event_package ? [['Event Package', r.event_package]] : []),
-                ...(r.waste_management_plan ? [['Waste Management', r.waste_management_plan]] : []),
-                ...(r.crowd_management_plan ? [['Crowd Management', r.crowd_management_plan]] : []),
                 ...(r.event_considerations  ? [['Event Considerations', r.event_considerations]] : []),
+                ...(r.crowd_management_confirmed ? [['Crowd Management', 'Confirmed by client']] : []),
+                ...(r.waste_management_confirmed ? [['Waste Management', 'Confirmed by client']] : []),
                 ['Amount',       r.payment ? `₱${Number(r.payment.amount).toLocaleString()}` : '—'],
                 ['Payment',      r.payment?.status ?? '—'],
               ].map(([label, value]) => (

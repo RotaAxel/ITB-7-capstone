@@ -136,11 +136,16 @@ export default function App() {
                     <Route path="admin/calendar"     element={<AdminCalendar />} />
                   </Route>
 
+                  {/* Staff only — payments oversight and user management moved
+                      off Admin and onto Staff. */}
+                  <Route element={<ProtectedRoute roles={['staff']} />}>
+                    <Route path="staff/users"    element={<AdminUsers />} />
+                    <Route path="staff/payments" element={<AdminPayments />} />
+                  </Route>
+
                   {/* Admin only */}
                   <Route element={<ProtectedRoute roles={['administrator']} />}>
-                    <Route path="admin/users"     element={<AdminUsers />} />
                     <Route path="admin/analytics" element={<AdminAnalytics />} />
-                    <Route path="admin/payments"  element={<AdminPayments />} />
                   </Route>
                 </Route>
               </Route>

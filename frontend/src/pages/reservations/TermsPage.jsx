@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
-import { ArrowLeft, CheckCircle2, FileText } from 'lucide-react'
+import { ArrowLeft, CheckCircle2, FileText, Download } from 'lucide-react'
 import api from '@/api/axios'
 import { Card, CardContent } from '@/components/ui/Card'
 import Button from '@/components/ui/Button'
@@ -41,6 +41,14 @@ const termsFor = type => [
   {
     heading: '7. City Hall Authority',
     body: 'CABS facilities are government property. The Cabuyao City Hall / local government may cancel or pre-empt any reservation at any time — for public events, emergencies, maintenance, or other administrative directives — even after approval or payment. Affected clients will be notified as soon as possible and are entitled to a full refund for any reservation cancelled on this basis.',
+  },
+  {
+    heading: '8. Crowd Management (Large Events)',
+    body: 'For events with 50 or more participants, the client is solely responsible for providing adequate crowd management — entry/exit, crowd flow, and security — both during and after the event. By confirming this below, the client agrees to fulfill this responsibility; CABS does not provide crowd management services itself.',
+  },
+  {
+    heading: '9. Waste Management',
+    body: 'Regardless of event size, the client is solely responsible for providing adequate waste management and disposal, both during and after the event. By confirming this below, the client agrees to fulfill this responsibility; CABS does not provide waste management services itself.',
   },
 ]
 
@@ -92,11 +100,20 @@ export default function TermsPage() {
   const navigate    = useNavigate()
   const queryClient = useQueryClient()
   const [agreed, setAgreed] = useState(false)
+  // Collected here (rather than earlier, in the booking form) since this is
+  // the client's actual Terms & Conditions acceptance step for this flow.
+  // Crowd management is large-events only (mirrors
+  // ReservationController::LARGE_EVENT_THRESHOLD); waste management applies
+  // to every reservation regardless of size.
+  const [crowdConfirmed, setCrowdConfirmed] = useState(false)
+  const [wasteConfirmed, setWasteConfirmed] = useState(false)
 
   const { data: reservation, isLoading } = useQuery({
     queryKey: ['reservation', id],
     queryFn: () => api.get(`/reservations/${id}`).then(r => r.data),
   })
+
+  const isLargeEvent = (reservation?.number_of_participants ?? 0) >= 50
 
   // A reservation that's part of a multi-date bundle has N sibling rows, each
   // with its own terms_acknowledged flag — acknowledging just this one (the
@@ -106,9 +123,12 @@ export default function TermsPage() {
   const groupId = reservation?.reservation_group_id
 
   const acknowledgeMutation = useMutation({
-    mutationFn: () => groupId
-      ? api.post(`/reservations/groups/${groupId}/acknowledge-terms`)
-      : api.post(`/reservations/${id}/acknowledge-terms`),
+    mutationFn: () => {
+      const payload = { crowd_management_confirmed: crowdConfirmed, waste_management_confirmed: wasteConfirmed }
+      return groupId
+        ? api.post(`/reservations/groups/${groupId}/acknowledge-terms`, payload)
+        : api.post(`/reservations/${id}/acknowledge-terms`, payload)
+    },
     onSuccess: res => {
       queryClient.invalidateQueries({ queryKey: ['reservation', id] })
       queryClient.invalidateQueries({ queryKey: ['reservation-group', groupId] })
@@ -132,8 +152,26 @@ export default function TermsPage() {
       toast.success('Terms acknowledged. Proceeding to payment.')
       navigate(`/reservations/${id}/payment`, { replace: true })
     },
-    onError: () => toast.error('Failed to acknowledge terms.'),
+    onError: err => toast.error(err.response?.data?.message || 'Failed to acknowledge terms.'),
   })
+
+  // Printable Contract of Agreement (Kontrata) — the same terms above plus a
+  // signature block for both parties, for anyone who wants a physically-signed
+  // paper copy. A grouped reservation downloads one contract covering every
+  // date in the bundle, same as acknowledging terms above.
+  const downloadContract = () => {
+    const url = groupId ? `/reservations/groups/${groupId}/contract` : `/reservations/${id}/contract`
+    api.get(url, { responseType: 'blob' })
+      .then(res => {
+        const blobUrl = URL.createObjectURL(new Blob([res.data], { type: 'application/pdf' }))
+        const a = document.createElement('a')
+        a.href = blobUrl
+        a.download = groupId ? `CABS-Contract-Group-${groupId}.pdf` : `CABS-Contract-Reservation-${id}.pdf`
+        a.click()
+        URL.revokeObjectURL(blobUrl)
+      })
+      .catch(() => toast.error('Failed to download the contract.'))
+  }
 
   if (isLoading) return <div className="flex justify-center py-16"><Spinner size="lg" /></div>
 
@@ -151,9 +189,14 @@ export default function TermsPage() {
             ? 'You have already agreed to the terms and conditions — this facility is free, so your reservation is confirmed.'
             : 'You have already agreed to the terms and conditions.'}
         </p>
-        <Link to={alreadyConfirmed ? `/reservations/${id}` : (groupId ? `/reservations/group/${groupId}` : `/reservations/${id}/payment`)} replace>
-          <Button>{alreadyConfirmed ? 'View Reservation' : 'Proceed to Payment'}</Button>
-        </Link>
+        <div className="flex flex-wrap items-center justify-center gap-3">
+          <Link to={alreadyConfirmed ? `/reservations/${id}` : (groupId ? `/reservations/group/${groupId}` : `/reservations/${id}/payment`)} replace>
+            <Button>{alreadyConfirmed ? 'View Reservation' : 'Proceed to Payment'}</Button>
+          </Link>
+          <Button variant="outline" onClick={downloadContract}>
+            <Download className="h-4 w-4" /> Contract (Kontrata)
+          </Button>
+        </div>
       </div>
     )
   }
@@ -167,9 +210,14 @@ export default function TermsPage() {
         <ArrowLeft className="h-4 w-4" /> Back
       </button>
 
-      <div className="flex items-center gap-2 mb-1">
-        <FileText className="h-6 w-6 text-[#C0392B]" />
-        <h1 className="text-2xl font-bold text-[#1C2833]">Terms and Conditions</h1>
+      <div className="flex items-center justify-between gap-3 mb-1 flex-wrap">
+        <div className="flex items-center gap-2">
+          <FileText className="h-6 w-6 text-[#C0392B]" />
+          <h1 className="text-2xl font-bold text-[#1C2833]">Terms and Conditions</h1>
+        </div>
+        <Button variant="outline" size="sm" onClick={downloadContract}>
+          <Download className="h-3.5 w-3.5" /> Printable Contract (Kontrata)
+        </Button>
       </div>
       <p className="text-[#1C2833] text-sm mb-6">
         Please read and acknowledge the following terms before proceeding to payment.
@@ -192,6 +240,36 @@ export default function TermsPage() {
         </CardContent>
       </Card>
 
+      {/* Waste management applies to every reservation, regardless of event
+          size — unlike crowd management below, it's not gated by isLargeEvent. */}
+      <label className="flex items-start gap-3 p-4 bg-[#FADBD8]/20 rounded-lg border border-[#F1948A]/30 mb-3 cursor-pointer">
+        <input
+          type="checkbox"
+          checked={wasteConfirmed}
+          onChange={e => setWasteConfirmed(e.target.checked)}
+          className="mt-0.5 h-4 w-4 rounded border-[#E5E7E9] text-[#C0392B] shrink-0"
+        />
+        <span className="text-sm text-gray-700">
+          I confirm that I will provide adequate waste management/disposal for this event, as
+          required by clause 9 above.
+        </span>
+      </label>
+
+      {isLargeEvent && (
+        <label className="flex items-start gap-3 p-4 bg-[#FADBD8]/20 rounded-lg border border-[#F1948A]/30 mb-3 cursor-pointer">
+          <input
+            type="checkbox"
+            checked={crowdConfirmed}
+            onChange={e => setCrowdConfirmed(e.target.checked)}
+            className="mt-0.5 h-4 w-4 rounded border-[#E5E7E9] text-[#C0392B] shrink-0"
+          />
+          <span className="text-sm text-gray-700">
+            I confirm that I will provide adequate crowd management for this event, as required by
+            clause 8 above.
+          </span>
+        </label>
+      )}
+
       <label className="flex items-start gap-3 p-4 bg-[#FADBD8]/20 rounded-lg border border-[#F1948A]/30 mb-5 cursor-pointer">
         <input
           type="checkbox"
@@ -208,7 +286,7 @@ export default function TermsPage() {
       </label>
 
       <Button
-        disabled={!agreed || acknowledgeMutation.isPending}
+        disabled={!agreed || !wasteConfirmed || (isLargeEvent && !crowdConfirmed) || acknowledgeMutation.isPending}
         loading={acknowledgeMutation.isPending}
         className="w-full"
         onClick={() => acknowledgeMutation.mutate()}

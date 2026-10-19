@@ -71,6 +71,22 @@ export default function ReservationDetail() {
       .catch(() => toast.error(`Failed to download the ${kind} letter.`))
   }
 
+  // Printable Contract of Agreement (Kontrata) — Terms & Conditions plus a
+  // signature block for both parties. Available any time, independent of
+  // payment status, same as the letters above.
+  const downloadContract = () => {
+    api.get(`/reservations/${id}/contract`, { responseType: 'blob' })
+      .then(res => {
+        const url = URL.createObjectURL(new Blob([res.data], { type: 'application/pdf' }))
+        const a   = document.createElement('a')
+        a.href     = url
+        a.download = `CABS-Contract-Reservation-${id}.pdf`
+        a.click()
+        URL.revokeObjectURL(url)
+      })
+      .catch(() => toast.error('Failed to download the contract.'))
+  }
+
   if (isLoading) return <div className="flex justify-center py-16"><Spinner size="lg" /></div>
 
   if (error || !reservation) {
@@ -146,9 +162,9 @@ export default function ReservationDetail() {
                 ['Purpose',      r.purpose],
                 ...(r.event_package ? [['Event Package', r.event_package]] : []),
                 ['Participants', r.number_of_participants],
-                ...(r.waste_management_plan ? [['Waste Management', r.waste_management_plan]] : []),
-                ...(r.crowd_management_plan ? [['Crowd Management', r.crowd_management_plan]] : []),
                 ...(r.event_considerations  ? [['Event Considerations', r.event_considerations]] : []),
+                ...(r.crowd_management_confirmed ? [['Crowd Management', 'Confirmed by client']] : []),
+                ...(r.waste_management_confirmed ? [['Waste Management', 'Confirmed by client']] : []),
                 ['Submitted',    r.created_at ? format(parseISO(r.created_at), 'MMM d, yyyy h:mm a') : '—'],
               ].map(([label, value]) => (
                 <div key={label} className="flex gap-4 py-2.5">
@@ -253,6 +269,10 @@ export default function ReservationDetail() {
               <Download className="h-4 w-4" /> Your Request Letter
             </Button>
           )}
+
+          <Button variant="outline" onClick={downloadContract}>
+            <Download className="h-4 w-4" /> Contract (Kontrata)
+          </Button>
 
           {canCancel && (
             <Button

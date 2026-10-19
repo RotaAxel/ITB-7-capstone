@@ -103,9 +103,9 @@ export default function ReservationGroupDetail() {
                 ['Purpose',      first.purpose],
                 ...(first.event_package ? [['Event Package', first.event_package]] : []),
                 ['Participants', first.number_of_participants],
-                ...(first.waste_management_plan ? [['Waste Management', first.waste_management_plan]] : []),
-                ...(first.crowd_management_plan ? [['Crowd Management', first.crowd_management_plan]] : []),
                 ...(first.event_considerations  ? [['Event Considerations', first.event_considerations]] : []),
+                ...(first.crowd_management_confirmed ? [['Crowd Management', 'Confirmed by client']] : []),
+                ...(first.waste_management_confirmed ? [['Waste Management', 'Confirmed by client']] : []),
                 ['Submitted',    first.created_at ? format(parseISO(first.created_at), 'MMM d, yyyy h:mm a') : '—'],
               ].map(([label, value]) => (
                 <div key={label} className="flex gap-4 py-2.5">
@@ -226,6 +226,19 @@ export default function ReservationGroupDetail() {
               Pay All (₱{Number(group.total_amount).toLocaleString()})
             </Button>
           )}
+
+          <Button variant="outline" onClick={() => {
+            api.get(`/reservations/groups/${groupId}/contract`, { responseType: 'blob' })
+              .then(res => {
+                const url = URL.createObjectURL(new Blob([res.data], { type: 'application/pdf' }))
+                const a = document.createElement('a')
+                a.href = url; a.download = `CABS-Contract-Group-${groupId}.pdf`; a.click()
+                URL.revokeObjectURL(url)
+              })
+              .catch(() => toast.error('Failed to download the contract.'))
+          }}>
+            <Download className="h-4 w-4" /> Contract (Kontrata)
+          </Button>
 
           {awaitingConfirmation && (
             <span className="text-sm text-[#B7950B] self-center">Payment received — confirming your reservations…</span>

@@ -56,9 +56,9 @@ export default function NewReservation() {
     number_of_participants: '',
     selected_amenities:     [],
     amenity_quantities:     {}, // amenity_id => requested quantity, quantifiable amenities only (e.g. chairs)
-    waste_management_plan:  '',
-    crowd_management_plan:  '',
     event_considerations:   '',
+    crowd_management_confirmed: false, // large events only — see LARGE_EVENT_THRESHOLD (collected later on TermsPage)
+    waste_management_confirmed: false,
   })
   const [errors, setErrors] = useState({})
   const [letterFile, setLetterFile] = useState(null)
@@ -81,11 +81,17 @@ export default function NewReservation() {
     enabled: Boolean(form.facility_id),
   })
 
+  // Participant count is included once known (it's entered one step *after*
+  // the date, in Details) so the large-event day-block check can catch the
+  // case where THIS reservation being large is what causes the conflict —
+  // not just an already-existing large event nearby. Re-fires automatically
+  // as soon as the client types 50+ into Participants, instead of only
+  // surfacing at final submission (see FacilityController::getAvailability()).
   const { data: bookedSlots = [] } = useQuery({
-    queryKey: ['availability', form.facility_id, form.reservation_date],
+    queryKey: ['availability', form.facility_id, form.reservation_date, form.number_of_participants],
     queryFn: () =>
       api.get(`/facilities/${form.facility_id}/availability`, {
-        params: { date: form.reservation_date },
+        params: { date: form.reservation_date, participants: form.number_of_participants || undefined },
       }).then(r => r.data),
     enabled: Boolean(form.facility_id && form.reservation_date),
   })
@@ -230,9 +236,14 @@ export default function NewReservation() {
       errs.number_of_participants = `Exceeds facility capacity of ${facilityDetail.capacity}.`
     }
     if (n >= LARGE_EVENT_THRESHOLD) {
-      if (!form.waste_management_plan.trim()) errs.waste_management_plan = 'Required for events of this size.'
-      if (!form.crowd_management_plan.trim()) errs.crowd_management_plan = 'Required for events of this size.'
       if (!form.event_considerations.trim())  errs.event_considerations  = 'Required for events of this size.'
+      // Only knowable now that participants is entered — see the comment on
+      // the bookedSlots query above. Multi-date mode has no live preview at
+      // all (server validates atomically at submission), so this only
+      // applies to a single date.
+      if (!multiDate && bookedSlots.some(s => s.status === 'large_event_block')) {
+        errs.number_of_participants = `At ${LARGE_EVENT_THRESHOLD}+ participants, this date falls within a large event's prep/cleanup window and can't be booked. Go back and choose a different date, or reduce participants below ${LARGE_EVENT_THRESHOLD}.`
+      }
     }
     setErrors(errs)
     return Object.keys(errs).length === 0
@@ -263,9 +274,9 @@ export default function NewReservation() {
       }
       fd.append('purpose',                form.purpose)
       fd.append('event_package',          form.event_package)
-      fd.append('waste_management_plan',  form.waste_management_plan)
-      fd.append('crowd_management_plan',  form.crowd_management_plan)
       fd.append('event_considerations',   form.event_considerations)
+      fd.append('crowd_management_confirmed', form.crowd_management_confirmed ? 'true' : 'false')
+      fd.append('waste_management_confirmed', form.waste_management_confirmed ? 'true' : 'false')
       fd.append('number_of_participants', form.number_of_participants)
       form.selected_amenities.forEach(id => fd.append('selected_amenities[]', id))
       Object.entries(form.amenity_quantities).forEach(([id, qty]) => fd.append(`amenity_quantities[${id}]`, qty))
@@ -284,9 +295,9 @@ export default function NewReservation() {
         : { reservation_date: form.reservation_date, start_time: form.start_time, end_time: form.end_time }),
       purpose:                form.purpose,
       event_package:          form.event_package || null,
-      waste_management_plan:  form.waste_management_plan || null,
-      crowd_management_plan:  form.crowd_management_plan || null,
       event_considerations:   form.event_considerations || null,
+      crowd_management_confirmed: form.crowd_management_confirmed,
+      waste_management_confirmed: form.waste_management_confirmed,
       number_of_participants: Number(form.number_of_participants),
       selected_amenities:     form.selected_amenities,
       amenity_quantities:     form.amenity_quantities,
@@ -673,8 +684,14 @@ export default function NewReservation() {
                   <ul className="space-y-1">
                     {bookedSlots.map((s, i) => (
                       <li key={i} className="text-[#B7950B]">
-                        {fmt12(s.start_time)} – {fmt12(s.end_time)}
-                        <span className="ml-2 capitalize text-[#F39C12]">({s.status})</span>
+                        {s.status === 'large_event_block' ? (
+                          <>This entire day is blocked — it falls within a nearby large event's prep/cleanup window.</>
+                        ) : (
+                          <>
+                            {fmt12(s.start_time)} – {fmt12(s.end_time)}
+                            <span className="ml-2 capitalize text-[#F39C12]">({s.status})</span>
+                          </>
+                        )}
                       </li>
                     ))}
                   </ul>
@@ -801,41 +818,19 @@ export default function NewReservation() {
               {Number(form.number_of_participants) >= LARGE_EVENT_THRESHOLD && (
                 <div className="space-y-4">
                   <div className="p-3 bg-[#FEF9E7] rounded-lg border border-[#F9E79F] text-sm text-[#B7950B]">
-                    Events with {LARGE_EVENT_THRESHOLD}+ participants need a plan on file before admins can
-                    approve the request.
+                    Events with {LARGE_EVENT_THRESHOLD}+ participants need the field below on file. You'll also
+                    confirm crowd &amp; waste management responsibility when you review the Terms &amp;
+                    Conditions after submitting.
                   </div>
 
-                  <div>
-                    <Label>Waste Management Plan *</Label>
-                    <textarea
-                      rows={2}
-                      value={form.waste_management_plan}
-                      onChange={e => setField('waste_management_plan', e.target.value)}
-                      placeholder="How will trash/waste be collected and disposed of during and after the event?"
-                      className={`mt-1 block w-full rounded-lg border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#FADBD8] focus:border-[#C0392B] resize-none ${
-                        errors.waste_management_plan ? 'border-[#C0392B]' : 'border-[#E5E7E9]'
-                      }`}
-                    />
-                    {errors.waste_management_plan && (
-                      <p className="text-red-500 text-xs mt-1">{errors.waste_management_plan}</p>
-                    )}
-                  </div>
-
-                  <div>
-                    <Label>Crowd Management Plan *</Label>
-                    <textarea
-                      rows={2}
-                      value={form.crowd_management_plan}
-                      onChange={e => setField('crowd_management_plan', e.target.value)}
-                      placeholder="How will entry/exit, crowd flow, and security be handled?"
-                      className={`mt-1 block w-full rounded-lg border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#FADBD8] focus:border-[#C0392B] resize-none ${
-                        errors.crowd_management_plan ? 'border-[#C0392B]' : 'border-[#E5E7E9]'
-                      }`}
-                    />
-                    {errors.crowd_management_plan && (
-                      <p className="text-red-500 text-xs mt-1">{errors.crowd_management_plan}</p>
-                    )}
-                  </div>
+                  {!multiDate && bookedSlots.some(s => s.status === 'large_event_block') && (
+                    <div className="p-3 bg-[#FADBD8]/40 rounded-lg border border-[#F1948A] text-sm text-[#96281B]">
+                      <strong>This date can't be booked at this size.</strong> At {LARGE_EVENT_THRESHOLD}+
+                      participants, {form.reservation_date} falls within a large event's prep/cleanup window
+                      on this facility. Go back to the Schedule step and choose a different date, or reduce
+                      participants below {LARGE_EVENT_THRESHOLD}.
+                    </div>
+                  )}
 
                   <div>
                     <Label>Pre-Event &amp; Post-Event Considerations *</Label>
@@ -895,9 +890,8 @@ export default function NewReservation() {
                     : []),
                   ...(Number(form.number_of_participants) >= LARGE_EVENT_THRESHOLD
                     ? [
-                        ['Waste Management', form.waste_management_plan],
-                        ['Crowd Management', form.crowd_management_plan],
                         ['Event Considerations', form.event_considerations],
+                        ['Crowd & Waste Management', <span key="cwm" className="text-[#27AE60] font-medium">Confirmed</span>],
                       ]
                     : []),
                 ].map(([label, value]) => (

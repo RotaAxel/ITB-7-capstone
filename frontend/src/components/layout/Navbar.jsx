@@ -17,14 +17,14 @@ const NAV_ITEMS = {
     { to: '/staff/reservations', label: 'Reservations' },
     { to: '/staff/calendar',     label: 'Calendar'     },
     { to: '/staff/facilities',   label: 'Facilities'   },
+    { to: '/staff/users',        label: 'Users'        },
+    { to: '/staff/payments',     label: 'Payments'     },
   ],
   administrator: [
     { to: '/admin/dashboard',    label: 'Dashboard'    },
     { to: '/admin/reservations', label: 'Reservations' },
     { to: '/admin/facilities',   label: 'Facilities'   },
     { to: '/admin/calendar',     label: 'Calendar'     },
-    { to: '/admin/users',        label: 'Users'        },
-    { to: '/admin/payments',     label: 'Payments'     },
     { to: '/admin/analytics',    label: 'Analytics'    },
   ],
 }
@@ -46,13 +46,13 @@ const PAGE_LABELS = [
   { pattern: /^\/admin\/reservations/,               label: 'Reservations' },
   { pattern: /^\/admin\/facilities/,                 label: 'Facilities' },
   { pattern: /^\/admin\/calendar/,                   label: 'Calendar' },
-  { pattern: /^\/admin\/users/,                      label: 'User Management' },
-  { pattern: /^\/admin\/payments/,                   label: 'Payments' },
   { pattern: /^\/admin\/analytics/,                  label: 'Analytics' },
   { pattern: /^\/staff\/dashboard/,                  label: 'Dashboard' },
   { pattern: /^\/staff\/reservations/,               label: 'Reservations' },
   { pattern: /^\/staff\/calendar/,                   label: 'Calendar' },
   { pattern: /^\/staff\/facilities/,                 label: 'Facilities' },
+  { pattern: /^\/staff\/users/,                      label: 'User Management' },
+  { pattern: /^\/staff\/payments/,                   label: 'Payments' },
 ]
 
 function usePageLabel() {

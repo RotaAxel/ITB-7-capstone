@@ -14,7 +14,7 @@ import Modal from '@/components/ui/Modal'
 import SearchAutocomplete from '@/components/ui/SearchAutocomplete'
 
 const BLANK_FACILITY = {
-  name: '', description: '', location: '', capacity: '', buffer_minutes: 30, price_per_hour: '', resident_price_per_hour: '', status: 'available',
+  name: '', description: '', location: '', capacity: '', buffer_minutes: 30, large_event_buffer_days: 1, price_per_hour: '', resident_price_per_hour: '', status: 'available',
   requires_authorization_letter: false,
   requires_request_letter: false,
   what_to_bring: '', restrictions: '', additional_terms: '',
@@ -250,6 +250,7 @@ export default function AdminFacilities() {
     fd.append('location',       form.location)
     fd.append('capacity',       form.capacity)
     fd.append('buffer_minutes', form.buffer_minutes ?? '')
+    fd.append('large_event_buffer_days', form.large_event_buffer_days ?? '')
     fd.append('price_per_hour', form.price_per_hour)
     fd.append('resident_price_per_hour', form.resident_price_per_hour ?? '')
     fd.append('status',         form.status)
@@ -635,6 +636,21 @@ export default function AdminFacilities() {
                 <p className="text-xs text-[#1C2833] mt-1">
                   Blocked before and after every reservation on this facility — a 2–4pm booking with a
                   30-minute buffer blocks 1:30pm–4:30pm from any other reservation.
+                </p>
+              </div>
+              <div>
+                <Label>Large Event Prep/Cleanup (days)</Label>
+                <Input
+                  type="number"
+                  min={0}
+                  max={14}
+                  value={form.large_event_buffer_days}
+                  onChange={e => setF('large_event_buffer_days', e.target.value)}
+                  className="mt-1"
+                />
+                <p className="text-xs text-[#1C2833] mt-1">
+                  Whole calendar days blocked before and after a large event (50+ participants) on this
+                  facility — no other reservation of any size can land on those days, regardless of time.
                 </p>
               </div>
               <div>

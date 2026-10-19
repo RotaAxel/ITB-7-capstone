@@ -15,8 +15,11 @@ use Illuminate\Support\Str;
 class ReservationController extends Controller
 {
     // At or above this many participants, a reservation is treated as a "large
-    // event" and must include waste/crowd management plans and event
+    // event" and must include crowd management confirmation and event
     // considerations — below it, those fields aren't even shown on the form.
+    // Waste management confirmation is NOT gated by this threshold — every
+    // reservation, regardless of size, must confirm it (see store() and
+    // acknowledgeTerms() below).
     private const LARGE_EVENT_THRESHOLD = 50;
 
     // Purely descriptive event-type label a client can optionally attach to a
@@ -75,9 +78,13 @@ class ReservationController extends Controller
             'facility_id'            => ['required', 'exists:facilities,id'],
             'purpose'                => ['required', 'string'],
             'event_package'          => ['nullable', 'string', 'in:' . implode(',', self::EVENT_PACKAGES)],
-            'waste_management_plan'  => ['nullable', 'string'],
-            'crowd_management_plan'  => ['nullable', 'string'],
             'event_considerations'   => ['nullable', 'string'],
+            // Large events no longer describe a waste/crowd management plan in
+            // free text — they just check two separate boxes confirming they'll
+            // provide each, per the Terms & Conditions clauses covering them (see
+            // termsFor() in NewReservationModal.jsx / NewReservation.jsx / TermsPage.jsx).
+            'crowd_management_confirmed' => ['sometimes'],
+            'waste_management_confirmed' => ['sometimes'],
             'number_of_participants' => ['required', 'integer', 'min:1'],
             // Either a single date+time (the ordinary path — every existing caller
             // keeps working unchanged) or several dates bundled into one request
@@ -160,16 +167,24 @@ class ReservationController extends Controller
             ], 422);
         }
 
-        // Large events need an actual plan on file before admins approve them —
-        // the frontend already only shows these fields once participants cross the
-        // threshold, so this is the server-side backstop against a direct API call
-        // skipping them.
+        // Large events need pre-/post-event considerations on file, plus crowd
+        // management confirmation — the frontend already only shows these once
+        // participants cross the threshold, so this is the server-side backstop
+        // against a direct API call skipping them.
         if ($validated['number_of_participants'] >= self::LARGE_EVENT_THRESHOLD) {
             $missing = array_filter([
-                'waste_management_plan' => 'a waste management plan',
-                'crowd_management_plan' => 'a crowd management plan',
-                'event_considerations'  => 'pre-event and post-event considerations',
+                'event_considerations' => 'pre-event and post-event considerations',
             ], fn ($label, $field) => empty($validated[$field] ?? null), ARRAY_FILTER_USE_BOTH);
+
+            // The crowd management confirmation lives in the Terms & Conditions
+            // step. The modal flow collects it there before this same request
+            // (terms_acknowledged is already true), so check it now; the
+            // full-page flow always submits terms_acknowledged=false and defers
+            // it to its separate TermsPage visit afterward (see
+            // acknowledgeTerms() below), so it's not required yet here.
+            if ($request->boolean('terms_acknowledged') && !$request->boolean('crowd_management_confirmed')) {
+                $missing['crowd_management_confirmed'] = 'confirmation that you will provide crowd management (see Terms & Conditions)';
+            }
 
             if ($missing) {
                 return response()->json([
@@ -177,6 +192,17 @@ class ReservationController extends Controller
                         . implode(', ', $missing) . '.',
                 ], 422);
             }
+        }
+
+        // Waste management confirmation is required for every reservation,
+        // regardless of event size — not gated by LARGE_EVENT_THRESHOLD like
+        // crowd management above. Same deferral as crowd management: only
+        // enforced now if terms are already acknowledged in this request (the
+        // modal flow); the full-page flow defers it to acknowledgeTerms().
+        if ($request->boolean('terms_acknowledged') && !$request->boolean('waste_management_confirmed')) {
+            return response()->json([
+                'message' => 'Please confirm you will provide waste management (see Terms & Conditions).',
+            ], 422);
         }
 
         // Slots to create — a plain `reservation_date`/`start_time`/`end_time`
@@ -247,6 +273,46 @@ class ReservationController extends Controller
             return response()->json(['message' => $message], 422);
         }
 
+        // Large-event prep/cleanup day block — distinct from the time-of-day
+        // buffer above, this blocks whole calendar days around a large event
+        // (see Facility::large_event_buffer_days), for the extended setup/
+        // teardown a large event needs. It cuts both ways: a day next to an
+        // EXISTING large event is off-limits to any new reservation (large or
+        // small), and if THIS request is itself a large event, none of its own
+        // prep/cleanup days may already carry any other reservation.
+        $isNewLargeEvent = $validated['number_of_participants'] >= self::LARGE_EVENT_THRESHOLD;
+        $prepDays = $facility->large_event_buffer_days;
+
+        if ($prepDays > 0) {
+            $dayBlockDates = [];
+            foreach ($slots as $slot) {
+                $windowStart = date('Y-m-d', strtotime("{$slot['date']} -{$prepDays} days"));
+                $windowEnd   = date('Y-m-d', strtotime("{$slot['date']} +{$prepDays} days"));
+
+                $nearby = Reservation::where('facility_id', $validated['facility_id'])
+                    ->whereIn('status', ['pending', 'approved', 'confirmed'])
+                    ->whereBetween('reservation_date', [$windowStart, $windowEnd])
+                    ->where('reservation_date', '!=', $slot['date'])
+                    ->get(['reservation_date', 'number_of_participants']);
+
+                foreach ($nearby as $existing) {
+                    $existingIsLargeEvent = $existing->number_of_participants >= self::LARGE_EVENT_THRESHOLD;
+                    if ($isNewLargeEvent || $existingIsLargeEvent) {
+                        $dayBlockDates[] = $slot['date'];
+                        break;
+                    }
+                }
+            }
+
+            if ($dayBlockDates) {
+                return response()->json([
+                    'message' => 'These dates fall within a large event\'s prep/cleanup window and cannot be '
+                        . 'booked: ' . implode(', ', array_unique($dayBlockDates)) . '. This facility blocks '
+                        . $prepDays . ' day(s) before and after a large event (50+ participants).',
+                ], 422);
+            }
+        }
+
         // Each selected amenity ("material") can carry its own additional fee —
         // flat per selection for a normal amenity, or *per unit* for a
         // quantifiable one (chairs, tables — see Amenity::is_quantifiable), where
@@ -307,15 +373,19 @@ class ReservationController extends Controller
             : null;
 
         $termsAcknowledged = $request->boolean('terms_acknowledged');
+        $crowdManagementConfirmed = $request->boolean('crowd_management_confirmed');
+        $wasteManagementConfirmed = $request->boolean('waste_management_confirmed');
         $groupId = $isGroup ? (string) Str::uuid() : null;
 
         $reservations = DB::transaction(function () use (
             $slots, $groupId, $validated, $request, $rate, $amenitiesFee, $isFree,
-            $termsAcknowledged, $letterPath, $requestLetterPath, $amenityQuantitiesToStore
+            $termsAcknowledged, $crowdManagementConfirmed, $wasteManagementConfirmed,
+            $letterPath, $requestLetterPath, $amenityQuantitiesToStore
         ) {
             return collect($slots)->map(function ($slot) use (
                 $groupId, $validated, $request, $rate, $amenitiesFee, $isFree,
-                $termsAcknowledged, $letterPath, $requestLetterPath, $amenityQuantitiesToStore
+                $termsAcknowledged, $crowdManagementConfirmed, $wasteManagementConfirmed,
+                $letterPath, $requestLetterPath, $amenityQuantitiesToStore
             ) {
                 // Each date's own duration (via timestamps, to avoid Carbon 3
                 // signed-diff behaviour) — differing time slots in a bundle mean
@@ -331,9 +401,9 @@ class ReservationController extends Controller
                     'reservation_group_id'       => $groupId,
                     'purpose'                    => $validated['purpose'],
                     'event_package'              => $validated['event_package'] ?? null,
-                    'waste_management_plan'      => $validated['waste_management_plan'] ?? null,
-                    'crowd_management_plan'      => $validated['crowd_management_plan'] ?? null,
                     'event_considerations'       => $validated['event_considerations'] ?? null,
+                    'crowd_management_confirmed' => $crowdManagementConfirmed,
+                    'waste_management_confirmed' => $wasteManagementConfirmed,
                     'number_of_participants'     => $validated['number_of_participants'],
                     'reservation_date'           => $slot['date'],
                     'start_time'                 => $slot['start_time'],
@@ -638,9 +708,31 @@ class ReservationController extends Controller
             return response()->json(['message' => 'Forbidden.'], 403);
         }
 
+        // Crowd management confirmation is large-events only; waste management
+        // confirmation is required for every reservation regardless of size
+        // (two independent checkboxes — see termsFor() in
+        // NewReservationModal.jsx / TermsPage.jsx). The modal flow already
+        // collected both at creation time (see store()); this is the full-page
+        // flow's chance to do so, since its Terms step is this separate screen.
+        $isLargeEvent = $reservation->number_of_participants >= self::LARGE_EVENT_THRESHOLD;
+        $missing = [];
+        if ($isLargeEvent && !$reservation->crowd_management_confirmed && !$request->boolean('crowd_management_confirmed')) {
+            $missing[] = 'crowd management';
+        }
+        if (!$reservation->waste_management_confirmed && !$request->boolean('waste_management_confirmed')) {
+            $missing[] = 'waste management';
+        }
+        if ($missing) {
+            return response()->json([
+                'message' => 'Please confirm you will provide ' . implode(' and ', $missing) . ' before proceeding.',
+            ], 422);
+        }
+
         $reservation->update([
             'terms_acknowledged'    => true,
             'terms_acknowledged_at' => now(),
+            'waste_management_confirmed' => true,
+            ...($isLargeEvent ? ['crowd_management_confirmed' => true] : []),
         ]);
 
         $this->confirmIfFreeAndReady($reservation);
