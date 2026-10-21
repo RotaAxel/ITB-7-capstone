@@ -101,13 +101,22 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::get('/admin/reservations',                         [ReservationController::class, 'adminIndex']);
         Route::put('/admin/reservations/{id}/complete',           [ReservationController::class, 'complete']);
         Route::put('/admin/reservations/{id}/notes',              [ReservationController::class, 'updateNotes']);
+
+        // Cabuyeño residency verification — carved back out for admin (see
+        // UserController::residencyReviewIndex) after full User Management
+        // moved to staff-only below; both roles can list pending/reviewed
+        // proofs and approve/reject them, admin just can't reach the rest of
+        // User Management (creating/editing/deleting accounts).
+        Route::get('/admin/residency-reviews',                    [UserController::class, 'residencyReviewIndex']);
+        Route::put('/admin/users/{id}/residency',                 [UserController::class, 'verifyResidency']);
     });
 
     // Staff only routes — approving/rejecting a reservation (the step that
     // unlocks payment), payments oversight, and user management all moved off
     // the administrator role and onto staff, who now own these day-to-day
     // tasks; administrator keeps viewing reservations/completing them above,
-    // but no longer approves/rejects or manages payments/users.
+    // and keeps residency verification (shared group above), but no longer
+    // approves/rejects reservations or manages payments/the rest of users.
     Route::middleware('role:staff')->group(function () {
         Route::put('/admin/reservations/{id}/approve',            [ReservationController::class, 'approve']);
         Route::put('/admin/reservations/{id}/reject',             [ReservationController::class, 'reject']);
@@ -121,7 +130,6 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::get('/admin/users',                                [UserController::class, 'index']);
         Route::post('/admin/users',                               [UserController::class, 'store']);
         Route::put('/admin/users/{id}',                           [UserController::class, 'update']);
-        Route::put('/admin/users/{id}/residency',                 [UserController::class, 'verifyResidency']);
         Route::delete('/admin/users/{id}',                        [UserController::class, 'destroy']);
     });
 

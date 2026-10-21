@@ -333,6 +333,7 @@ export default function GuestPage() {
             © {new Date().getFullYear()} Cabuyao Athletes Basic School. All rights reserved.
           </p>
           <div className="flex items-center gap-4 text-xs text-[#1C2833]">
+            <Link to="/terms" className="hover:text-[#C0392B] transition-colors">Terms &amp; Conditions</Link>
             <Link to="/login" className="hover:text-[#C0392B] transition-colors">Sign In</Link>
             <Link to="/register" className="hover:text-[#C0392B] transition-colors">Register</Link>
           </div>

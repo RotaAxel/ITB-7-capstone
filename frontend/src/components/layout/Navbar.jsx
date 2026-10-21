@@ -25,6 +25,7 @@ const NAV_ITEMS = {
     { to: '/admin/reservations', label: 'Reservations' },
     { to: '/admin/facilities',   label: 'Facilities'   },
     { to: '/admin/calendar',     label: 'Calendar'     },
+    { to: '/admin/residency',    label: 'Residency'    },
     { to: '/admin/analytics',    label: 'Analytics'    },
   ],
 }
@@ -46,6 +47,7 @@ const PAGE_LABELS = [
   { pattern: /^\/admin\/reservations/,               label: 'Reservations' },
   { pattern: /^\/admin\/facilities/,                 label: 'Facilities' },
   { pattern: /^\/admin\/calendar/,                   label: 'Calendar' },
+  { pattern: /^\/admin\/residency/,                  label: 'Residency Verification' },
   { pattern: /^\/admin\/analytics/,                  label: 'Analytics' },
   { pattern: /^\/staff\/dashboard/,                  label: 'Dashboard' },
   { pattern: /^\/staff\/reservations/,               label: 'Reservations' },

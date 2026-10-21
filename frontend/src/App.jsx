@@ -16,6 +16,7 @@ import NotFound from '@/pages/NotFound'
 const VerifyEmail    = lazy(() => import('@/pages/auth/VerifyEmail'))
 const ForgotPassword = lazy(() => import('@/pages/auth/ForgotPassword'))
 const ResetPassword  = lazy(() => import('@/pages/auth/ResetPassword'))
+const TermsAndConditionsPage = lazy(() => import('@/pages/TermsAndConditionsPage'))
 
 // Lazy pages
 const Dashboard         = lazy(() => import('@/pages/dashboard/Dashboard'))
@@ -34,6 +35,7 @@ const AdminDashboard    = lazy(() => import('@/pages/admin/AdminDashboard'))
 const AdminReservations = lazy(() => import('@/pages/admin/AdminReservations'))
 const AdminFacilities   = lazy(() => import('@/pages/admin/AdminFacilities'))
 const AdminUsers        = lazy(() => import('@/pages/admin/AdminUsers'))
+const AdminResidencyVerification = lazy(() => import('@/pages/admin/AdminResidencyVerification'))
 const AdminAnalytics    = lazy(() => import('@/pages/admin/AdminAnalytics'))
 const AdminCalendar     = lazy(() => import('@/pages/admin/AdminCalendar'))
 const AdminPayments     = lazy(() => import('@/pages/admin/AdminPayments'))
@@ -95,6 +97,8 @@ export default function App() {
               <Route path="/verify-email"    element={<VerifyEmail />} />
               <Route path="/forgot-password" element={<ForgotPassword />} />
               <Route path="/reset-password"  element={<ResetPassword />} />
+              {/* Viewable by anyone, logged in or not — no reservation needed. */}
+              <Route path="/terms"           element={<TermsAndConditionsPage />} />
 
               {/* Public root — guest page for visitors, dashboard redirect for logged-in */}
               <Route index element={<RoleRedirect />} />
@@ -146,6 +150,9 @@ export default function App() {
                   {/* Admin only */}
                   <Route element={<ProtectedRoute roles={['administrator']} />}>
                     <Route path="admin/analytics" element={<AdminAnalytics />} />
+                    {/* Just Cabuyeño residency verification — carved back out of
+                        User Management, which stays staff-only above. */}
+                    <Route path="admin/residency" element={<AdminResidencyVerification />} />
                   </Route>
                 </Route>
               </Route>

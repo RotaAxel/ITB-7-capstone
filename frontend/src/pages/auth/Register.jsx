@@ -330,7 +330,12 @@ export default function Register() {
               </button>
             </form>
 
-            <p className="mt-6 text-center text-sm text-[#1C2833]">
+            <p className="mt-4 text-center text-xs text-[#1C2833]">
+              By creating an account, you agree to CABS's{' '}
+              <Link to="/terms" className="font-semibold text-[#C0392B] hover:text-[#96281B]">Terms and Conditions</Link>.
+            </p>
+
+            <p className="mt-2 text-center text-sm text-[#1C2833]">
               Already have an account?{' '}
               <Link to="/login" className="font-semibold text-[#C0392B] hover:text-[#96281B]">Sign in</Link>
             </p>

@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
-import { Plus, Pencil, Trash2, ChevronLeft, ChevronRight, Users, UserCheck, ShieldCheck, Briefcase, MapPin, Clock, CheckCircle2, XCircle, Download } from 'lucide-react'
+import { Plus, Pencil, Trash2, ChevronLeft, ChevronRight, Users, UserCheck, ShieldCheck, Briefcase, MapPin } from 'lucide-react'
 import api from '@/api/axios'
 import { Card, CardContent } from '@/components/ui/Card'
 import Button from '@/components/ui/Button'
@@ -10,6 +10,8 @@ import Input from '@/components/ui/Input'
 import Label from '@/components/ui/Label'
 import Modal from '@/components/ui/Modal'
 import SearchAutocomplete from '@/components/ui/SearchAutocomplete'
+import ResidencyReviewModal from '@/components/ResidencyReviewModal'
+import { RESIDENCY_META } from '@/constants/residency'
 
 const ROLE_COLORS = {
   client:        { bg: 'bg-blue-100',   text: 'text-blue-700'  },
@@ -33,14 +35,6 @@ const BLANK = {
   age: '', gender: '', address: '', contact_number: '',
 }
 
-// Mirrors User::residency_status on the backend.
-const RESIDENCY_META = {
-  unverified: { label: 'Not Submitted',    icon: MapPin,       cls: 'text-gray-400' },
-  pending:    { label: 'Pending Review',   icon: Clock,        cls: 'text-[#B7950B]' },
-  verified:   { label: 'Verified Cabuyeño',icon: CheckCircle2, cls: 'text-[#1E8449]' },
-  rejected:   { label: 'Rejected',         icon: XCircle,      cls: 'text-[#C0392B]' },
-}
-
 export default function AdminUsers() {
   const queryClient = useQueryClient()
 
@@ -51,14 +45,9 @@ export default function AdminUsers() {
   const [form,   setForm]     = useState(BLANK)
   const [deleteConfirm, setDeleteConfirm] = useState(null)
 
-  // Residency review — residencyModal holds the user being reviewed; preview is
-  // fetched separately as an object URL (PDF/image, same pattern as the
-  // reservation letter previews) so an admin can actually look at the submitted
-  // document before deciding.
-  const [residencyModal,   setResidencyModal]   = useState(null) // null | { ...user }
-  const [residencyPreview, setResidencyPreview] = useState(null) // { url, mimeType } | null
-  const [residencyLoading, setResidencyLoading] = useState(false)
-  const [residencyNote,    setResidencyNote]    = useState('')
+  // Residency review — see ResidencyReviewModal, shared with the admin-facing
+  // residency-only review page, which owns the preview-fetch/verify logic.
+  const [residencyModal, setResidencyModal] = useState(null) // null | { ...user }
 
   const params = {
     page,
@@ -109,43 +98,6 @@ export default function AdminUsers() {
     onError: err => toast.error(err.response?.data?.message || 'Failed to delete.'),
   })
 
-  const openResidencyReview = (u) => {
-    setResidencyModal(u)
-    setResidencyNote(u.residency_admin_note ?? '')
-    if (u.residency_proof_path) {
-      setResidencyLoading(true)
-      api.get(`/users/${u.id}/residency-proof`, { responseType: 'blob' })
-        .then(res => setResidencyPreview({ url: URL.createObjectURL(res.data), mimeType: res.data.type }))
-        .catch(() => toast.error('Failed to load the residency proof.'))
-        .finally(() => setResidencyLoading(false))
-    }
-  }
-
-  const closeResidencyReview = () => {
-    if (residencyPreview) URL.revokeObjectURL(residencyPreview.url)
-    setResidencyModal(null)
-    setResidencyPreview(null)
-    setResidencyNote('')
-  }
-
-  const downloadResidencyProof = () => {
-    if (!residencyPreview || !residencyModal) return
-    const ext = { 'application/pdf': 'pdf', 'image/jpeg': 'jpg', 'image/png': 'png' }[residencyPreview.mimeType] || 'bin'
-    const a = document.createElement('a')
-    a.href = residencyPreview.url
-    a.download = `residency-proof-user-${residencyModal.id}.${ext}`
-    a.click()
-  }
-
-  const verifyResidencyMutation = useMutation({
-    mutationFn: ({ id, status, note }) => api.put(`/admin/users/${id}/residency`, { status, note }),
-    onSuccess: () => {
-      toast.success('Residency status updated.')
-      closeResidencyReview()
-      queryClient.invalidateQueries({ queryKey: ['admin', 'users'] })
-    },
-    onError: err => toast.error(err.response?.data?.message || 'Failed to update residency status.'),
-  })
 
   const setF = (k, v) => setForm(f => ({ ...f, [k]: v }))
 
@@ -325,7 +277,7 @@ export default function AdminUsers() {
                     <div className="col-span-1 flex gap-1 justify-end">
                       {u.role === 'client' && u.residency_proof_path && (
                         <button
-                          onClick={() => openResidencyReview(u)}
+                          onClick={() => setResidencyModal(u)}
                           className="p-1.5 rounded-lg text-[#1C2833] hover:text-[#8E44AD] hover:bg-purple-50 transition-colors"
                           title="Review residency proof"
                         >
@@ -478,75 +430,11 @@ export default function AdminUsers() {
 
       {/* Residency Proof Review Modal */}
       {residencyModal && (
-        <Modal
-          title={`Residency Proof — ${residencyModal.full_name}`}
-          onClose={closeResidencyReview}
-          size="2xl"
-          footer={
-            <div className="flex items-center justify-between gap-2">
-              <span className={`text-sm font-medium ${RESIDENCY_META[residencyModal.residency_status].cls}`}>
-                Current status: {RESIDENCY_META[residencyModal.residency_status].label}
-              </span>
-              <div className="flex gap-2">
-                <Button variant="outline" onClick={closeResidencyReview}>Close</Button>
-                <Button
-                  variant="danger"
-                  loading={verifyResidencyMutation.isPending}
-                  onClick={() => verifyResidencyMutation.mutate({ id: residencyModal.id, status: 'rejected', note: residencyNote })}
-                >
-                  Reject
-                </Button>
-                <Button
-                  loading={verifyResidencyMutation.isPending}
-                  onClick={() => verifyResidencyMutation.mutate({ id: residencyModal.id, status: 'verified', note: residencyNote })}
-                  className="bg-[#1E8449] hover:bg-[#196F3D]"
-                >
-                  Verify as Cabuyeño
-                </Button>
-              </div>
-            </div>
-          }
-        >
-          <div className="space-y-4">
-            {residencyLoading ? (
-              <div className="flex justify-center py-10"><Spinner size="lg" /></div>
-            ) : residencyPreview ? (
-              <div className="flex items-center justify-between gap-3 mb-1">
-                <p className="text-sm text-[#1C2833]">Submitted document:</p>
-                <Button size="sm" variant="outline" onClick={downloadResidencyProof}>
-                  <Download className="h-3.5 w-3.5" /> Download
-                </Button>
-              </div>
-            ) : null}
-
-            {!residencyLoading && residencyPreview && (
-              residencyPreview.mimeType === 'application/pdf' ? (
-                <iframe
-                  src={residencyPreview.url}
-                  title="Residency proof"
-                  className="w-full h-[60vh] rounded-lg border border-[#E5E7E9]"
-                />
-              ) : (
-                <img
-                  src={residencyPreview.url}
-                  alt="Residency proof"
-                  className="max-w-full max-h-[60vh] w-auto h-auto object-contain mx-auto block rounded-lg border border-[#E5E7E9]"
-                />
-              )
-            )}
-
-            <div>
-              <Label>Note (shown to the client if rejected)</Label>
-              <textarea
-                rows={2}
-                value={residencyNote}
-                onChange={e => setResidencyNote(e.target.value)}
-                placeholder="e.g. Document is unreadable, or doesn't show a Cabuyao address."
-                className="mt-1 w-full rounded-lg border border-[#E5E7E9] px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#FADBD8] focus:border-[#C0392B] resize-none"
-              />
-            </div>
-          </div>
-        </Modal>
+        <ResidencyReviewModal
+          user={residencyModal}
+          onClose={() => setResidencyModal(null)}
+          onUpdated={() => queryClient.invalidateQueries({ queryKey: ['admin', 'users'] })}
+        />
       )}
 
       {/* Delete Confirm Modal */}

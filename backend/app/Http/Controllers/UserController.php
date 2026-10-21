@@ -99,6 +99,44 @@ class UserController extends Controller
         return response()->json($user->fresh());
     }
 
+    // Narrowly-scoped listing for the admin-facing residency-only review page
+    // (AdminResidencyVerification.jsx) — only clients who've actually
+    // submitted a proof, never the full user table. Staff keep using index()
+    // above for the full User Management page; this exists so admin can
+    // review/approve Cabuyeño proofs without regaining the rest of User
+    // Management (see routes/api.php).
+    public function residencyReviewIndex(Request $request)
+    {
+        $base = fn () => User::where('role', 'client')->whereNotNull('residency_proof_path');
+
+        $query = $base()
+            ->when($request->filled('status'), fn ($q) => $q->where('residency_status', $request->status))
+            ->when($request->filled('search'), function ($q) use ($request) {
+                $q->where(function ($inner) use ($request) {
+                    $inner->where('full_name', 'like', "%{$request->search}%")
+                          ->orWhere('email', 'like', "%{$request->search}%");
+                });
+            })
+            // Pending first (needs action), then most recently updated.
+            ->orderByRaw("FIELD(residency_status, 'pending', 'verified', 'rejected')")
+            ->orderByDesc('updated_at');
+
+        $paginated = $query->paginate(25);
+
+        // Reflects every submission, independent of the current status
+        // filter/search — same pattern as AdminUsers/AdminPayments' stat cards.
+        $counts = [
+            'pending'  => $base()->where('residency_status', 'pending')->count(),
+            'verified' => $base()->where('residency_status', 'verified')->count(),
+            'rejected' => $base()->where('residency_status', 'rejected')->count(),
+        ];
+
+        return response()->json([
+            ...$paginated->toArray(),
+            'counts' => $counts,
+        ]);
+    }
+
     public function verifyResidency(Request $request, $id)
     {
         $user = User::findOrFail($id);
