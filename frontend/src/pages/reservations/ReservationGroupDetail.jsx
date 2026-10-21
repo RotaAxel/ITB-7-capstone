@@ -3,7 +3,7 @@ import { Link, useNavigate, useParams } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { format, parseISO } from 'date-fns'
 import { toast } from 'sonner'
-import { ArrowLeft, Download, CalendarRange } from 'lucide-react'
+import { ArrowLeft, CalendarRange } from 'lucide-react'
 import api from '@/api/axios'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card'
 import Badge from '@/components/ui/Badge'
@@ -12,6 +12,7 @@ import Button from '@/components/ui/Button'
 import Spinner from '@/components/ui/Spinner'
 import GroupPaymentModal from '@/components/GroupPaymentModal'
 import ReceiptModal from '@/components/ReceiptModal'
+import DocumentViewerModal from '@/components/DocumentViewerModal'
 
 // The client-facing view of a multi-date reservation bundle (see
 // ReservationController::store()'s reservation_dates[] path) — every date was
@@ -24,6 +25,7 @@ export default function ReservationGroupDetail() {
   const queryClient   = useQueryClient()
   const [showPayment, setShowPayment] = useState(false)
   const [receiptId,   setReceiptId]   = useState(null)
+  const [viewingDoc,  setViewingDoc]  = useState(null) // null | { title, url, filename }
 
   const { data: group, isLoading, error } = useQuery({
     queryKey: ['reservation-group', groupId],
@@ -178,31 +180,21 @@ export default function ReservationGroupDetail() {
             <CardHeader><CardTitle>Letters (cover every date)</CardTitle></CardHeader>
             <CardContent className="pt-0 flex flex-wrap gap-2">
               {first.authorization_letter_path && (
-                <Button variant="outline" size="sm" onClick={() => {
-                  api.get(`/reservations/${first.id}/authorization-letter`, { responseType: 'blob' })
-                    .then(res => {
-                      const url = URL.createObjectURL(res.data)
-                      const a = document.createElement('a')
-                      a.href = url; a.download = `authorization-letter-group-${groupId}.pdf`; a.click()
-                      URL.revokeObjectURL(url)
-                    })
-                    .catch(() => toast.error('Failed to download the authorization letter.'))
-                }}>
-                  <Download className="h-3.5 w-3.5" /> Authorization Letter
+                <Button variant="outline" size="sm" onClick={() => setViewingDoc({
+                  title: 'Authorization Letter',
+                  url: `/reservations/${first.id}/authorization-letter`,
+                  filename: `authorization-letter-group-${groupId}`,
+                })}>
+                  Authorization Letter
                 </Button>
               )}
               {first.request_letter_path && (
-                <Button variant="outline" size="sm" onClick={() => {
-                  api.get(`/reservations/${first.id}/request-letter`, { responseType: 'blob' })
-                    .then(res => {
-                      const url = URL.createObjectURL(res.data)
-                      const a = document.createElement('a')
-                      a.href = url; a.download = `request-letter-group-${groupId}.pdf`; a.click()
-                      URL.revokeObjectURL(url)
-                    })
-                    .catch(() => toast.error('Failed to download the request letter.'))
-                }}>
-                  <Download className="h-3.5 w-3.5" /> Request Letter
+                <Button variant="outline" size="sm" onClick={() => setViewingDoc({
+                  title: 'Request Letter',
+                  url: `/reservations/${first.id}/request-letter`,
+                  filename: `request-letter-group-${groupId}`,
+                })}>
+                  Request Letter
                 </Button>
               )}
             </CardContent>
@@ -227,17 +219,12 @@ export default function ReservationGroupDetail() {
             </Button>
           )}
 
-          <Button variant="outline" onClick={() => {
-            api.get(`/reservations/groups/${groupId}/contract`, { responseType: 'blob' })
-              .then(res => {
-                const url = URL.createObjectURL(new Blob([res.data], { type: 'application/pdf' }))
-                const a = document.createElement('a')
-                a.href = url; a.download = `CABS-Contract-Group-${groupId}.pdf`; a.click()
-                URL.revokeObjectURL(url)
-              })
-              .catch(() => toast.error('Failed to download the contract.'))
-          }}>
-            <Download className="h-4 w-4" /> Contract (Kontrata)
+          <Button variant="outline" onClick={() => setViewingDoc({
+            title: 'Contract (Kontrata)',
+            url: `/reservations/groups/${groupId}/contract`,
+            filename: `CABS-Contract-Group-${groupId}`,
+          })}>
+            Contract (Kontrata)
           </Button>
 
           {awaitingConfirmation && (
@@ -272,6 +259,9 @@ export default function ReservationGroupDetail() {
       )}
       {receiptId && (
         <ReceiptModal reservationId={receiptId} onClose={() => setReceiptId(null)} />
+      )}
+      {viewingDoc && (
+        <DocumentViewerModal {...viewingDoc} onClose={() => setViewingDoc(null)} />
       )}
     </div>
   )

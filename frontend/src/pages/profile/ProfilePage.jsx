@@ -10,6 +10,7 @@ import Button from '@/components/ui/Button'
 import Input from '@/components/ui/Input'
 import Label from '@/components/ui/Label'
 import Badge from '@/components/ui/Badge'
+import DocumentViewerModal from '@/components/DocumentViewerModal'
 
 // Mirrors User::residency_status on the backend.
 const RESIDENCY_META = {
@@ -23,6 +24,7 @@ export default function ProfilePage() {
   const { user, refreshUser, isClient } = useAuth()
   const navigate = useNavigate()
   const [residencyFile, setResidencyFile] = useState(null)
+  const [viewingProof, setViewingProof] = useState(false)
 
   const [profile, setProfile] = useState({
     full_name:      user?.full_name      ?? '',
@@ -76,20 +78,6 @@ export default function ProfilePage() {
     },
     onError: err => toast.error(err.response?.data?.message || 'Failed to submit residency proof.'),
   })
-
-  const downloadResidencyProof = () => {
-    api.get(`/users/${user.id}/residency-proof`, { responseType: 'blob' })
-      .then(res => {
-        const ext = { 'application/pdf': 'pdf', 'image/jpeg': 'jpg', 'image/png': 'png' }[res.data.type] || 'bin'
-        const url = URL.createObjectURL(res.data)
-        const a   = document.createElement('a')
-        a.href = url
-        a.download = `residency-proof-user-${user.id}.${ext}`
-        a.click()
-        URL.revokeObjectURL(url)
-      })
-      .catch(() => toast.error('Failed to download your residency proof.'))
-  }
 
   const handleProfileSave = () => {
     profileMutation.mutate({
@@ -246,7 +234,7 @@ export default function ProfilePage() {
                   <Icon className="h-4 w-4 shrink-0" /> {meta.label}
                 </span>
                 {user?.residency_proof_path && (
-                  <Button size="sm" variant="outline" onClick={downloadResidencyProof}>
+                  <Button size="sm" variant="outline" onClick={() => setViewingProof(true)}>
                     View Submitted File
                   </Button>
                 )}
@@ -338,6 +326,15 @@ export default function ProfilePage() {
           </div>
         </CardContent>
       </Card>
+
+      {viewingProof && (
+        <DocumentViewerModal
+          title="Residency Proof"
+          url={`/users/${user.id}/residency-proof`}
+          filename={`residency-proof-user-${user.id}`}
+          onClose={() => setViewingProof(false)}
+        />
+      )}
     </div>
   )
 }

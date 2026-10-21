@@ -2,12 +2,13 @@ import { useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
-import { ArrowLeft, CheckCircle2, FileText, Download } from 'lucide-react'
+import { ArrowLeft, CheckCircle2, FileText } from 'lucide-react'
 import api from '@/api/axios'
 import { Card, CardContent } from '@/components/ui/Card'
 import Button from '@/components/ui/Button'
 import Spinner from '@/components/ui/Spinner'
 import Alert from '@/components/ui/Alert'
+import DocumentViewerModal from '@/components/DocumentViewerModal'
 
 const termsFor = type => [
   {
@@ -107,6 +108,7 @@ export default function TermsPage() {
   // to every reservation regardless of size.
   const [crowdConfirmed, setCrowdConfirmed] = useState(false)
   const [wasteConfirmed, setWasteConfirmed] = useState(false)
+  const [viewingContract, setViewingContract] = useState(false)
 
   const { data: reservation, isLoading } = useQuery({
     queryKey: ['reservation', id],
@@ -157,20 +159,12 @@ export default function TermsPage() {
 
   // Printable Contract of Agreement (Kontrata) — the same terms above plus a
   // signature block for both parties, for anyone who wants a physically-signed
-  // paper copy. A grouped reservation downloads one contract covering every
+  // paper copy. A grouped reservation previews one contract covering every
   // date in the bundle, same as acknowledging terms above.
-  const downloadContract = () => {
-    const url = groupId ? `/reservations/groups/${groupId}/contract` : `/reservations/${id}/contract`
-    api.get(url, { responseType: 'blob' })
-      .then(res => {
-        const blobUrl = URL.createObjectURL(new Blob([res.data], { type: 'application/pdf' }))
-        const a = document.createElement('a')
-        a.href = blobUrl
-        a.download = groupId ? `CABS-Contract-Group-${groupId}.pdf` : `CABS-Contract-Reservation-${id}.pdf`
-        a.click()
-        URL.revokeObjectURL(blobUrl)
-      })
-      .catch(() => toast.error('Failed to download the contract.'))
+  const contractDoc = {
+    title: 'Contract (Kontrata)',
+    url: groupId ? `/reservations/groups/${groupId}/contract` : `/reservations/${id}/contract`,
+    filename: groupId ? `CABS-Contract-Group-${groupId}` : `CABS-Contract-Reservation-${id}`,
   }
 
   if (isLoading) return <div className="flex justify-center py-16"><Spinner size="lg" /></div>
@@ -193,10 +187,13 @@ export default function TermsPage() {
           <Link to={alreadyConfirmed ? `/reservations/${id}` : (groupId ? `/reservations/group/${groupId}` : `/reservations/${id}/payment`)} replace>
             <Button>{alreadyConfirmed ? 'View Reservation' : 'Proceed to Payment'}</Button>
           </Link>
-          <Button variant="outline" onClick={downloadContract}>
-            <Download className="h-4 w-4" /> Contract (Kontrata)
+          <Button variant="outline" onClick={() => setViewingContract(true)}>
+            Contract (Kontrata)
           </Button>
         </div>
+        {viewingContract && (
+          <DocumentViewerModal {...contractDoc} onClose={() => setViewingContract(false)} />
+        )}
       </div>
     )
   }
@@ -215,8 +212,8 @@ export default function TermsPage() {
           <FileText className="h-6 w-6 text-[#C0392B]" />
           <h1 className="text-2xl font-bold text-[#1C2833]">Terms and Conditions</h1>
         </div>
-        <Button variant="outline" size="sm" onClick={downloadContract}>
-          <Download className="h-3.5 w-3.5" /> Printable Contract (Kontrata)
+        <Button variant="outline" size="sm" onClick={() => setViewingContract(true)}>
+          Printable Contract (Kontrata)
         </Button>
       </div>
       <p className="text-[#1C2833] text-sm mb-6">
@@ -293,6 +290,10 @@ export default function TermsPage() {
       >
         I Agree — Proceed to Payment
       </Button>
+
+      {viewingContract && (
+        <DocumentViewerModal {...contractDoc} onClose={() => setViewingContract(false)} />
+      )}
     </div>
   )
 }

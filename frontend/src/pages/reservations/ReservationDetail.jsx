@@ -13,6 +13,7 @@ import Spinner from '@/components/ui/Spinner'
 import { useNotifications } from '@/hooks/useNotifications'
 import PaymentModal from '@/components/PaymentModal'
 import ReceiptModal from '@/components/ReceiptModal'
+import DocumentViewerModal from '@/components/DocumentViewerModal'
 
 export default function ReservationDetail() {
   const { id }      = useParams()
@@ -20,6 +21,7 @@ export default function ReservationDetail() {
   const queryClient = useQueryClient()
   const [showPayment, setShowPayment] = useState(false)
   const [showReceipt, setShowReceipt] = useState(false)
+  const [viewingDoc, setViewingDoc]   = useState(null) // null | { title, url, filename }
   const { notifications, markReadByReservation } = useNotifications()
 
   useEffect(() => {
@@ -56,35 +58,24 @@ export default function ReservationDetail() {
 
   // kind is 'authorization' | 'request' — two independent documents (see
   // Facility::requires_authorization_letter / requires_request_letter) that
-  // share this same download logic.
-  const downloadLetter = (kind) => {
-    api.get(`/reservations/${id}/${kind}-letter`, { responseType: 'blob' })
-      .then(res => {
-        const ext = { 'application/pdf': 'pdf', 'image/jpeg': 'jpg', 'image/png': 'png' }[res.data.type] || 'bin'
-        const url = URL.createObjectURL(res.data)
-        const a   = document.createElement('a')
-        a.href = url
-        a.download = `${kind}-letter-reservation-${id}.${ext}`
-        a.click()
-        URL.revokeObjectURL(url)
-      })
-      .catch(() => toast.error(`Failed to download the ${kind} letter.`))
+  // share this same preview logic.
+  const viewLetter = (kind) => {
+    setViewingDoc({
+      title: kind === 'authorization' ? 'Your Authorization Letter' : 'Your Request Letter',
+      url: `/reservations/${id}/${kind}-letter`,
+      filename: `${kind}-letter-reservation-${id}`,
+    })
   }
 
   // Printable Contract of Agreement (Kontrata) — Terms & Conditions plus a
   // signature block for both parties. Available any time, independent of
   // payment status, same as the letters above.
-  const downloadContract = () => {
-    api.get(`/reservations/${id}/contract`, { responseType: 'blob' })
-      .then(res => {
-        const url = URL.createObjectURL(new Blob([res.data], { type: 'application/pdf' }))
-        const a   = document.createElement('a')
-        a.href     = url
-        a.download = `CABS-Contract-Reservation-${id}.pdf`
-        a.click()
-        URL.revokeObjectURL(url)
-      })
-      .catch(() => toast.error('Failed to download the contract.'))
+  const viewContract = () => {
+    setViewingDoc({
+      title: 'Contract (Kontrata)',
+      url: `/reservations/${id}/contract`,
+      filename: `CABS-Contract-Reservation-${id}`,
+    })
   }
 
   if (isLoading) return <div className="flex justify-center py-16"><Spinner size="lg" /></div>
@@ -259,19 +250,19 @@ export default function ReservationDetail() {
           )}
 
           {r.authorization_letter_path && (
-            <Button variant="outline" onClick={() => downloadLetter('authorization')}>
-              <Download className="h-4 w-4" /> Your Authorization Letter
+            <Button variant="outline" onClick={() => viewLetter('authorization')}>
+              Your Authorization Letter
             </Button>
           )}
 
           {r.request_letter_path && (
-            <Button variant="outline" onClick={() => downloadLetter('request')}>
-              <Download className="h-4 w-4" /> Your Request Letter
+            <Button variant="outline" onClick={() => viewLetter('request')}>
+              Your Request Letter
             </Button>
           )}
 
-          <Button variant="outline" onClick={downloadContract}>
-            <Download className="h-4 w-4" /> Contract (Kontrata)
+          <Button variant="outline" onClick={viewContract}>
+            Contract (Kontrata)
           </Button>
 
           {canCancel && (
@@ -299,6 +290,9 @@ export default function ReservationDetail() {
       )}
       {showReceipt && (
         <ReceiptModal reservationId={id} onClose={() => setShowReceipt(false)} />
+      )}
+      {viewingDoc && (
+        <DocumentViewerModal {...viewingDoc} onClose={() => setViewingDoc(null)} />
       )}
     </div>
   )
