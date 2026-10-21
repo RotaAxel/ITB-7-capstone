@@ -82,7 +82,7 @@ function getRoute(n, role) {
     case 'ADMIN_PAYMENT_RECEIVED': return isStaff ? '/admin/payments' : '/reservations'
     case 'PAYMENT_FAILED':         return rid ? `/reservations/${rid}/payment` : '/reservations'
     case 'MAINTENANCE_ALERT':      return fid ? `/facilities/${fid}` : '/facilities'
-    case 'residency_proof':        return isStaff ? '/admin/users' : '/profile'
+    case 'residency_proof':        return role === 'staff' ? '/staff/users' : role === 'administrator' ? '/admin/residency' : '/profile'
     default:                       return '/notifications'
   }
 }
